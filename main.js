@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production' && process.defaultApp;
 
 let mainWindow;
 
@@ -16,6 +16,7 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 600,
+    title: 'Code Editor',
     show: false, // Don't show until ready-to-show
     webPreferences: {
       nodeIntegration: false, // Disable for security
@@ -39,7 +40,10 @@ function createWindow() {
     mainWindow.show();
     
     // Focus the window to ensure it's interactive
-    if (isDev) {
+    mainWindow.focus();
+    
+    // Only open devtools in development mode and when explicitly requested
+    if (isDev && process.argv.includes('--dev-tools')) {
       mainWindow.webContents.openDevTools();
     }
   });
@@ -47,7 +51,7 @@ function createWindow() {
   // Set Content Security Policy for better security
   const cspPolicy = isDev 
     ? "default-src 'self' 'unsafe-inline' data: blob: ws: wss: http://localhost:* http://127.0.0.1:* https://va.vercel-scripts.com https://openrouter.ai https://*.openrouter.ai; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* http://127.0.0.1:* https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; img-src 'self' data: blob: http://localhost:* http://127.0.0.1:*; font-src 'self' data: http://localhost:* http://127.0.0.1:*; connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:* https://vercel.live https://*.vercel.app https://va.vercel-scripts.com https://openrouter.ai https://*.openrouter.ai;"
-    : "default-src 'self' https://openrouter.ai https://*.openrouter.ai; script-src 'self' https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://vercel.live https://*.vercel.app https://va.vercel-scripts.com https://openrouter.ai https://*.openrouter.ai;";
+    : "default-src 'self' 'unsafe-inline' data: blob: file: app: https://openrouter.ai https://*.openrouter.ai; script-src 'self' 'unsafe-inline' 'unsafe-eval' file: app: https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline' data: file: app:; img-src 'self' data: blob: file: app:; font-src 'self' data: file: app:; connect-src 'self' file: app: https://vercel.live https://*.vercel.app https://va.vercel-scripts.com https://openrouter.ai https://*.openrouter.ai;";
 
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -63,12 +67,99 @@ function createWindow() {
     callback({});
   });
 
+  // Configuración para archivos estáticos en producción
+  if (!isDev) {
+    // Registrar un protocolo personalizado para servir archivos estáticos
+    const { protocol } = require('electron');
+    
+    // Registrar el protocolo file para manejar todos los archivos estáticos
+    protocol.interceptFileProtocol('file', (request, callback) => {
+      let url = request.url.substr(7); // Eliminar 'file://'
+      let finalPath;
+      
+      console.log('[PROTOCOL] Intercepting file request:', url);
+      
+      // Manejar rutas de archivos estáticos
+      if (url.includes('/_next/') || url.includes('./static/') || url.includes('./chunks/')) {
+        // Extraer la parte relativa de la ruta
+        let relativePath = url;
+        
+        // Eliminar cualquier prefijo de ruta absoluta
+        if (url.includes(__dirname)) {
+          relativePath = url.substring(url.indexOf(__dirname) + __dirname.length);
+        }
+        
+        // Limpiar la ruta relativa
+        relativePath = relativePath.replace(/^\/+/, '');
+        
+        // Construir la ruta absoluta al archivo estático
+        finalPath = path.join(__dirname, 'out', relativePath);
+        console.log('[PROTOCOL] Static asset path:', finalPath);
+      } else if (url.includes('out/index.html')) {
+        // Manejar el archivo index.html
+        finalPath = path.join(__dirname, 'out/index.html');
+        console.log('[PROTOCOL] Index file path:', finalPath);
+      } else {
+        // Usar la ruta original para otros archivos
+        finalPath = url;
+        console.log('[PROTOCOL] Other file path:', finalPath);
+      }
+      
+      // Verificar si el archivo existe
+      if (fs.existsSync(finalPath)) {
+        console.log('[PROTOCOL] File exists:', finalPath);
+        callback({ path: finalPath });
+      } else {
+        console.log('[PROTOCOL] File does not exist:', finalPath);
+        // Si el archivo no existe, intentar buscar en otras ubicaciones
+        const alternativePath = path.join(__dirname, url);
+        if (fs.existsSync(alternativePath)) {
+          console.log('[PROTOCOL] Found alternative path:', alternativePath);
+          callback({ path: alternativePath });
+        } else {
+          console.log('[PROTOCOL] No alternative path found, using original:', url);
+          callback({ path: url });
+        }
+      }
+    });
+  }
+
   if (isDev) {
     const devPort = process.env.PORT || '3001';
     const devUrl = process.env.DEV_SERVER_URL || `http://localhost:${devPort}`;
     mainWindow.loadURL(devUrl);
   } else {
-    mainWindow.loadFile(path.join(__dirname, 'out/index.html'));
+    // Usar un enfoque más simple para cargar el archivo index.html
+    const indexPath = path.join(__dirname, 'out/index.html');
+    console.log('[MAIN] Loading index from:', indexPath);
+    
+    // Verificar que el archivo existe
+    if (fs.existsSync(indexPath)) {
+      console.log('[MAIN] Index file exists, loading...');
+      
+      // Cargar el archivo directamente usando loadFile en lugar de loadURL
+      // Esto permite que Electron maneje las rutas relativas correctamente
+      mainWindow.loadFile(indexPath);
+      
+      // No abrimos DevTools en producción
+      // Solo se abrirán en modo desarrollo cuando se solicite explícitamente
+      
+      // Agregar un manejador para errores de carga
+      mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+        console.error('[MAIN] Failed to load:', errorCode, errorDescription);
+        // Intentar cargar de nuevo con URL absoluta como respaldo
+        mainWindow.loadURL(`file://${indexPath}`);
+      });
+      
+      // Registrar cuando la página se ha cargado completamente
+      mainWindow.webContents.on('did-finish-load', () => {
+        console.log('[MAIN] Page loaded successfully');
+      });
+    } else {
+      console.error('[MAIN] Index file not found at:', indexPath);
+      // Mostrar un mensaje de error
+      mainWindow.loadURL(`data:text/html,<html><body><h1>Error: No se pudo cargar la aplicación</h1><p>No se encontró el archivo index.html en: ${indexPath}</p></body></html>`);
+    }
   }
 
   // Prevent new window creation
@@ -82,6 +173,61 @@ app.whenReady().then(() => {
   if (isDev) {
     process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
   }
+  
+  // Register custom protocol to handle static files correctly
+  if (!isDev) {
+    const { protocol } = require('electron');
+    
+    // Registrar un esquema personalizado para depuración
+    protocol.registerSchemesAsPrivileged([
+      { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true } }
+    ]);
+    
+    // Register a custom protocol for serving static files
+    protocol.registerFileProtocol('app', (request, callback) => {
+      const url = request.url.substr(6); // Remove 'app://' prefix
+      const filePath = path.join(__dirname, 'out', url);
+      console.log('[PROTOCOL] app:// request for:', url, 'resolved to:', filePath);
+      callback({ path: filePath });
+    });
+    
+    // Intercept file protocol for better static file handling
+    protocol.interceptFileProtocol('file', (request, callback) => {
+      let url = request.url.substr(7); // Remove 'file://' prefix
+      let finalPath;
+      
+      console.log('[PROTOCOL] Intercepting file:// request for:', url);
+      
+      // Handle relative paths starting with _next
+      if (url.startsWith('_next/') || url.includes('/_next/')) {
+        const relativePath = url.startsWith('_next/') ? url : url.substring(url.indexOf('_next/'));
+        finalPath = path.join(__dirname, 'out', relativePath);
+        console.log('[PROTOCOL] _next path detected, resolving to:', finalPath);
+      } else if (url.includes('static/css/') || url.includes('static/js/') || url.includes('static/chunks/')) {
+        // Manejar archivos CSS y JavaScript directamente
+        const staticPath = url.includes('/out/') ? url : path.join(__dirname, 'out', url);
+        finalPath = staticPath;
+        console.log('[PROTOCOL] Static asset detected, resolving to:', finalPath);
+      } else if (url.includes('out/index.html') || url === path.join(__dirname, 'out/index.html')) {
+        // Si es la página principal, asegurarse de que la ruta es correcta
+        finalPath = path.join(__dirname, 'out/index.html');
+        console.log('[PROTOCOL] Index file detected, resolving to:', finalPath);
+      } else {
+        finalPath = url;
+        console.log('[PROTOCOL] Other file detected, using original path:', finalPath);
+      }
+      
+      // Verificar que el archivo existe
+      if (fs.existsSync(finalPath)) {
+        console.log('[PROTOCOL] File exists:', finalPath);
+      } else {
+        console.log('[PROTOCOL] WARNING: File does not exist:', finalPath);
+      }
+      
+      callback({ path: finalPath });
+    });
+  }
+  
   createWindow();
 });
 

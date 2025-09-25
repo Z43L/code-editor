@@ -1,5 +1,5 @@
 {
-  "name": "my-v0-project",
+  "name": "code-editor",
   "version": "0.1.0",
   "private": true,
   "main": "main.js",
@@ -10,7 +10,14 @@
     "start": "next start",
     "electron": "wait-on http://localhost:3001 && electron .",
     "electron:start": "concurrently -k \"cross-env BROWSER=none PORT=3001 pnpm dev\" \"pnpm electron\"",
-    "electron:build": "next build && next export && electron-builder"
+    "electron:build": "next build && electron-builder",
+    "build:mac": "next build && electron-builder --mac",
+    "build:win": "next build && electron-builder --win",
+    "build:linux": "next build && electron-builder --linux",
+    "build:all": "next build && electron-builder --mac --win --linux",
+    "dist": "pnpm run build:all",
+    "build:script": "./scripts/build-all.sh",
+    "icons": "./scripts/generate-icons.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -46,6 +53,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "1.0.4",
+    "critters": "^0.0.25",
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.5.1",
     "geist": "^1.3.1",
@@ -86,17 +94,99 @@
     "wait-on": "^9.0.1"
   },
   "build": {
-    "appId": "com.example.editorreact",
-    "productName": "Editor React",
+    "appId": "com.example.codeeditor",
+    "productName": "Code Editor",
     "files": [
+      "out/**/*",
       "main.js",
-      "out/**/*"
+      "preload.js",
+      "package.json"
     ],
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
+    "extraResources": [
+      {
+        "from": "public",
+        "to": "public",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "mac": {
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "ia32"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "ia32"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "category": "Development"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     }
   }
 }
