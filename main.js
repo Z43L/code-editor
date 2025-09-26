@@ -496,12 +496,12 @@ const IGNORED_FILES = new Set([
 
 async function readDirectoryStructure(dirPath, options = {}) {
   const {
-    maxDepth = 3,
+    maxDepth = Infinity, // Eliminamos la limitación de profundidad
     currentDepth = 0,
     rootPath = null,
-    lazyLoad = true,
+    lazyLoad = false, // Deshabilitamos lazy loading para cargar todo
     includeFileStats = false,
-    maxFiles = 1000
+    maxFiles = 10000 // Aumentamos el límite de archivos
   } = options;
 
   if (currentDepth >= maxDepth) return [];
@@ -539,22 +539,18 @@ async function readDirectoryStructure(dirPath, options = {}) {
       let children = [];
       let hasChildren = false;
       
-      if (lazyLoad && currentDepth >= 1) {
-        // Para lazy loading, solo verificar si tiene hijos sin cargarlos
-        try {
-          const subEntries = await fs.promises.readdir(fullPath, { withFileTypes: true });
-          hasChildren = subEntries.some(subEntry => !shouldIgnoreEntry(subEntry.name, subEntry.isDirectory()));
-        } catch (error) {
-          hasChildren = false;
-        }
-      } else {
-        // Cargar hijos recursivamente solo para los primeros niveles
+      // Siempre cargar hijos recursivamente para todos los niveles
+      try {
         children = await readDirectoryStructure(fullPath, {
           ...options,
           currentDepth: currentDepth + 1,
           rootPath: actualRootPath
         });
         hasChildren = children.length > 0;
+      } catch (error) {
+        console.warn('[WARN] Could not read subdirectory:', fullPath, error);
+        children = [];
+        hasChildren = false;
       }
       
       structure.push({
@@ -564,8 +560,8 @@ async function readDirectoryStructure(dirPath, options = {}) {
         fullPath: fullPath,
         children: children,
         hasChildren: hasChildren,
-        isExpanded: currentDepth < 1, // Solo auto-expandir el primer nivel
-        isLoaded: !lazyLoad || currentDepth < 1
+        isExpanded: true, // Auto-expandir todos los niveles
+        isLoaded: true // Marcar todos como cargados
       });
     }
     

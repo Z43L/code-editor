@@ -33,15 +33,18 @@ const nextConfig = {
   webpack: (config, { isServer }) => {
     // Configuración para manejar archivos CSS
     if (!isServer) {
-      config.optimization.splitChunks.cacheGroups = {
-        ...config.optimization.splitChunks.cacheGroups,
-        styles: {
-          name: 'styles',
-          test: /\.(css|scss)$/,
-          chunks: 'all',
-          enforce: true,
-        },
-      };
+      // Verificar si splitChunks existe y es un objeto antes de modificarlo
+      if (config.optimization.splitChunks && typeof config.optimization.splitChunks === 'object') {
+        config.optimization.splitChunks.cacheGroups = {
+          ...config.optimization.splitChunks.cacheGroups,
+          styles: {
+            name: 'styles',
+            test: /\.(css|scss)$/,
+            chunks: 'all',
+            enforce: true,
+          },
+        };
+      }
     }
     return config;
   },

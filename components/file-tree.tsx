@@ -51,8 +51,7 @@ interface DirectoryEntry {
 }
 
 // Constantes para optimización
-const MAX_INITIAL_DEPTH = 2
-const MAX_VISIBLE_ITEMS = 1000
+const MAX_VISIBLE_ITEMS = 10000 // Aumentamos el límite de elementos visibles
 const CHUNK_SIZE = 100
 const FILE_CACHE_SIZE = 50 // Máximo de archivos en cache
 const CACHE_EXPIRY = 300000 // 5 minutos
@@ -1293,14 +1292,12 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
             path: absolutePath, // Store absolute path
             children: [],
             isExpanded: false,
-            isLoaded: currentDepth < MAX_INITIAL_DEPTH,
+            isLoaded: true, // Siempre marcar como cargado
             directoryHandle: handle
           }
           
-          // Only load children up to initial depth for performance
-          if (currentDepth < MAX_INITIAL_DEPTH) {
-            entry.children = await readDirectoryRecursively(handle, relativeFullPath, currentDepth + 1, currentBasePath)
-          }
+          // Cargar todos los hijos recursivamente sin limitación de profundidad
+          entry.children = await readDirectoryRecursively(handle, relativeFullPath, currentDepth + 1, currentBasePath)
           
           entries.push(entry)
         } else if (handle.kind === 'file') {
