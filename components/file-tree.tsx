@@ -15,6 +15,9 @@ interface EditorSettings {
   codeSuggestions: boolean
   chatFileName: string
   chatDirectory: string
+  autosave: boolean
+  autocomplete: boolean
+  aiAutocomplete: boolean
 }
 
 type BooleanEditorSetting =
@@ -23,6 +26,9 @@ type BooleanEditorSetting =
   | 'wordWrap'
   | 'autoResponses'
   | 'codeSuggestions'
+  | 'autosave'
+  | 'autocomplete'
+  | 'aiAutocomplete'
 
 export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   lineNumbers: true,
@@ -32,6 +38,9 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   codeSuggestions: true,
   chatFileName: "chat.md",
   chatDirectory: "chats",
+  autosave: true,
+  autocomplete: true,
+  aiAutocomplete: false,
 }
 
 export type { EditorSettings }
@@ -2260,7 +2269,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
         )}
 
         {activeTab === "settings" && (
-          <div className="p-4 space-y-4">
+          <div className="p-4 space-y-4 overflow-y-auto h-full">
             <div>
               <h3 className="text-sm font-medium text-white mb-3">Editor</h3>
               <div className="space-y-2">
@@ -2290,6 +2299,39 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     className="rounded"
                   />
                   Ajuste de línea
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={currentSettings.autosave}
+                    onChange={() => handleSettingChange('autosave')}
+                    className="rounded"
+                  />
+                  Autoguardado
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-medium text-white mb-3">Autocompletado</h3>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={currentSettings.autocomplete}
+                    onChange={() => handleSettingChange('autocomplete')}
+                    className="rounded"
+                  />
+                  Sugerencias en el editor
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={currentSettings.aiAutocomplete}
+                    onChange={() => handleSettingChange('aiAutocomplete')}
+                    className="rounded"
+                  />
+                  Sugerencias con AI
                 </label>
               </div>
             </div>
