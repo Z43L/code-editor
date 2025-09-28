@@ -5,9 +5,181 @@ import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { Send } from "lucide-react"
 import type { FileItem } from "./flutter-editor"
-import { aiService, type EditorChatRequest, type AIProvider } from "../lib/ai-service"
-import { fileDiffService } from "../lib/file-diff"
+import { aiService, type EditorChatRequest, type AIProvider, type FileContextSnapshot } from "../lib/ai-service"
 import { chatService } from "../lib/chat-service"
+
+const RELATED_FILES_LIMIT = 4
+const CONTEXT_SUMMARY_LINE_LIMIT = 12
+const CONTEXT_SUMMARY_CHAR_LIMIT = 600
+const SELECTION_PREVIEW_LIMIT = 1500
+
+type FileContextIndex = Record<string, FileContextSnapshot>
+
+const summarizeForContext = (content?: string): string | undefined => {
+  if (!content) {
+    return undefined
+  }
+
+  const normalized = content.replace(/\r\n/g, "\n").trim()
+  if (!normalized) {
+    return undefined
+  }
+
+  const lines = normalized.split("\n").slice(0, CONTEXT_SUMMARY_LINE_LIMIT)
+  const joined = lines.join("\n")
+  if (joined.length <= CONTEXT_SUMMARY_CHAR_LIMIT) {
+    return joined
+  }
+
+  return `${joined.slice(0, CONTEXT_SUMMARY_CHAR_LIMIT)}…`
+}
+
+const truncate = (text: string, limit: number): string => {
+  if (text.length <= limit) {
+    return text
+  }
+  return `${text.slice(0, limit)}…`
+}
+
+const gatherRelatedPaths = (activeFile: string, files: Record<string, FileItem>, index: FileContextIndex): string[] => {
+  const candidates: string[] = []
+  const activeDirectory = activeFile.includes("/") ? activeFile.slice(0, activeFile.lastIndexOf("/")) : ""
+
+  Object.keys(files).forEach((path) => {
+    if (path !== activeFile) {
+      candidates.push(path)
+    }
+  })
+
+  const prioritized: string[] = []
+  const seen = new Set<string>()
+
+  if (activeDirectory) {
+    candidates.forEach((path) => {
+      if (!seen.has(path) && path.startsWith(activeDirectory)) {
+        prioritized.push(path)
+        seen.add(path)
+      }
+    })
+  }
+
+  candidates.forEach((path) => {
+    if (!seen.has(path)) {
+      prioritized.push(path)
+      seen.add(path)
+    }
+  })
+
+  if (prioritized.length < RELATED_FILES_LIMIT) {
+    Object.keys(index).forEach((path) => {
+      if (path !== activeFile && !seen.has(path)) {
+        prioritized.push(path)
+        seen.add(path)
+      }
+    })
+  }
+
+  return prioritized.slice(0, RELATED_FILES_LIMIT)
+}
+
+interface ContextBundleParams {
+  activeFile: string
+  files: Record<string, FileItem>
+  fileContextIndex: FileContextIndex
+  selectedText: string
+  hasSelection: boolean
+}
+
+const buildContextBundle = ({ activeFile, files, fileContextIndex, selectedText, hasSelection }: ContextBundleParams): {
+  promptContext: string
+  payload?: EditorChatRequest["context"]
+} => {
+  const sections: string[] = []
+  const payload: EditorChatRequest["context"] = {}
+
+  const baseMeta = fileContextIndex[activeFile]
+  const activeSummary = summarizeForContext(files[activeFile]?.content) ?? baseMeta?.summary ?? baseMeta?.preview
+
+  if (baseMeta || activeSummary) {
+    const activeSnapshot: FileContextSnapshot = {
+      path: baseMeta?.path || activeFile,
+      name: baseMeta?.name || activeFile.split("/").pop() || activeFile,
+      hash: baseMeta?.hash,
+      summary: activeSummary,
+      preview: baseMeta?.preview ?? activeSummary,
+      size: baseMeta?.size,
+      modified: baseMeta?.modified,
+      extension: baseMeta?.extension,
+      lineCount: baseMeta?.lineCount,
+    }
+
+    payload.activeFile = activeSnapshot
+
+    const lines = [`Path: ${activeSnapshot.path}`]
+    if (activeSnapshot.hash) {
+      lines.push(`Hash: ${activeSnapshot.hash}`)
+    }
+    const summaryText = activeSnapshot.summary || "Summary not available."
+    sections.push(`Active File\n${lines.join("\n")}\n${summaryText}`)
+  }
+
+  const relatedPaths = gatherRelatedPaths(activeFile, files, fileContextIndex)
+  if (relatedPaths.length > 0) {
+    const relatedSnapshots: FileContextSnapshot[] = []
+    const relatedDescriptions: string[] = []
+
+    relatedPaths.forEach((path, index) => {
+      const meta = fileContextIndex[path]
+      const summary = summarizeForContext(files[path]?.content) ?? meta?.summary ?? meta?.preview
+      if (!meta && !summary) {
+        return
+      }
+
+      const snapshot: FileContextSnapshot = {
+        path: meta?.path || path,
+        name: meta?.name || path.split("/").pop() || path,
+        hash: meta?.hash,
+        summary: summary,
+        preview: meta?.preview ?? summary,
+        size: meta?.size,
+        modified: meta?.modified,
+        extension: meta?.extension,
+        lineCount: meta?.lineCount,
+      }
+
+      relatedSnapshots.push(snapshot)
+      const header = `${index + 1}. ${snapshot.path}${snapshot.hash ? ` (hash: ${snapshot.hash})` : ""}`
+      relatedDescriptions.push(`${header}\n${snapshot.summary || "Summary not available."}`)
+    })
+
+    if (relatedSnapshots.length > 0) {
+      payload.relatedFiles = relatedSnapshots
+      sections.push(`Related Files\n${relatedDescriptions.join("\n\n")}`)
+    }
+  }
+
+  if (hasSelection && selectedText) {
+    const selectionPreview = truncate(selectedText, SELECTION_PREVIEW_LIMIT)
+    payload.selection = {
+      text: selectionPreview,
+      original_length: selectedText.length,
+      truncated: selectionPreview.length !== selectedText.length,
+      summary: summarizeForContext(selectionPreview),
+    }
+    sections.push(`Current Selection\n\`\`\`\n${selectionPreview}\n\`\`\``)
+  }
+
+  const promptContext = sections.join("\n\n")
+
+  if (!promptContext) {
+    return { promptContext: "" }
+  }
+
+  return {
+    promptContext,
+    payload,
+  }
+}
 
 interface AICommandBarProps {
   activeFile: string
@@ -17,9 +189,10 @@ interface AICommandBarProps {
   aiProvider?: AIProvider
   chatFileName?: string
   onSelectFile?: (filePath: string) => void
+  fileContextIndex: FileContextIndex
 }
 
-export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, aiProvider, chatFileName = "chat.md", onSelectFile }: AICommandBarProps) {
+export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, aiProvider, chatFileName = "chat.md", onSelectFile, fileContextIndex }: AICommandBarProps) {
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [chatHistory, setChatHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([])
@@ -43,8 +216,6 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
       const isFixCommand = userMessage.toLowerCase().startsWith('/fix')
       const isRefactorCommand = userMessage.toLowerCase().startsWith('/refactoriza')
       const isCommentCommand = userMessage.toLowerCase().startsWith('/comment')
-      const isSpecialCommand = isFixCommand || isRefactorCommand || isCommentCommand
-
       // Prepare the actual message for AI (remove command prefix)
       let aiMessage = userMessage
       if (isFixCommand) {
@@ -59,14 +230,30 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
         }
       }
 
+      const { promptContext, payload: contextPayload } = buildContextBundle({
+        activeFile,
+        files,
+        fileContextIndex,
+        selectedText,
+        hasSelection,
+      })
+
+      let messageWithContext = aiMessage
+      if (promptContext) {
+        messageWithContext = `${aiMessage}\n\n---\nProject Context\n${promptContext}`
+      }
+
       // Prepare request for AI service
       const aiRequest: EditorChatRequest = {
-        message: aiMessage,
+        message: messageWithContext,
+        intent: aiMessage,
+        original_user_message: userMessage,
         active_file: activeFile,
         file_content: files[activeFile]?.content,
         selected_text: selectedText,
         has_selection: hasSelection,
-        max_tokens: 1000
+        max_tokens: 1000,
+        context: contextPayload,
       }
 
       // Add user message to chat history

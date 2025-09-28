@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production' && process.defaultApp;
 
@@ -571,29 +572,38 @@ async function readDirectoryStructure(dirPath, options = {}) {
         console.log('[DEBUG] File limit reached, stopping at:', maxFiles);
         break;
       }
-      
+
       const fullPath = path.join(dirPath, entry.name);
       const relativePath = path.relative(actualRootPath, fullPath);
-      
+
       const fileInfo = {
         name: entry.name,
         type: 'file',
         path: relativePath,
         fullPath: fullPath
       };
-      
-      // Incluir estadísticas del archivo si se solicita
-      if (includeFileStats) {
-        try {
-          const stats = await fs.promises.stat(fullPath);
+
+      let stats = null;
+      try {
+        stats = await fs.promises.stat(fullPath);
+      } catch (error) {
+        console.warn('[WARN] Could not get stats for file:', fullPath, error.message);
+      }
+
+      if (stats) {
+        // Incluir estadísticas del archivo si se solicita
+        if (includeFileStats) {
           fileInfo.size = stats.size;
           fileInfo.modified = stats.mtime;
           fileInfo.extension = path.extname(entry.name).toLowerCase();
-        } catch (error) {
-          console.warn('[WARN] Could not get stats for file:', fullPath);
+        }
+
+        const contextMetadata = await generateFileContextMetadata(fullPath, relativePath, entry.name, stats);
+        if (contextMetadata) {
+          fileInfo.context = contextMetadata;
         }
       }
-      
+
       structure.push(fileInfo);
       fileCount++;
     }
@@ -623,6 +633,109 @@ function shouldIgnoreEntry(name, isDirectory) {
   if (name.startsWith('.') && name !== '.env') return true;
   if (isDirectory) return IGNORED_DIRS.has(name);
   return IGNORED_FILES.has(name);
+}
+
+const TEXT_FILE_EXTENSIONS = new Set([
+  '.txt', '.md', '.markdown', '.json', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.c', '.h', '.cpp', '.hpp', '.java', '.py', '.rb',
+  '.go', '.rs', '.swift', '.php', '.cs', '.kt', '.kts', '.scala', '.sql', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf', '.css',
+  '.scss', '.sass', '.less', '.html', '.htm', '.xml', '.svg', '.env', '.gitignore'
+]);
+
+const CONTEXT_PREVIEW_BYTES = 16 * 1024; // 16KB preview for summaries
+const CONTEXT_HASH_SAMPLE_BYTES = 64 * 1024; // Sample up to 64KB for hashing
+const SUMMARY_MAX_LINES = 12;
+const SUMMARY_MAX_LENGTH = 600;
+
+async function generateFileContextMetadata(fullPath, relativePath, displayName, stats) {
+  try {
+    const extension = path.extname(fullPath).toLowerCase();
+    const metadata = {
+      path: relativePath,
+      name: displayName,
+      extension,
+      size: stats.size,
+      modified: stats.mtimeMs
+    };
+
+    const isTextFile = isLikelyTextFile(extension, stats.size);
+
+    const signature = await computeFileSignature(fullPath, stats);
+    if (signature) {
+      metadata.hash = signature;
+    }
+
+    if (!isTextFile || stats.size === 0) {
+      return metadata;
+    }
+
+    const snippet = await readFileSnippet(fullPath, Math.min(CONTEXT_PREVIEW_BYTES, stats.size));
+    if (snippet) {
+      metadata.preview = snippet;
+      metadata.summary = createSummaryFromContent(snippet);
+      metadata.lineCount = snippet.split(/\r?\n/).length;
+    }
+
+    return metadata;
+  } catch (error) {
+    console.warn('[WARN] Could not generate context metadata for file:', fullPath, error.message);
+    return null;
+  }
+}
+
+function isLikelyTextFile(extension, fileSize) {
+  if (TEXT_FILE_EXTENSIONS.has(extension)) {
+    return true;
+  }
+  // Assume small files are text by default
+  return fileSize <= 8 * 1024;
+}
+
+async function readFileSnippet(fullPath, length) {
+  try {
+    const fileHandle = await fs.promises.open(fullPath, 'r');
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await fileHandle.read(buffer, 0, length, 0);
+    await fileHandle.close();
+    return buffer.slice(0, bytesRead).toString('utf-8');
+  } catch (error) {
+    console.warn('[WARN] Could not read snippet for file:', fullPath, error.message);
+    return '';
+  }
+}
+
+async function computeFileSignature(fullPath, stats) {
+  try {
+    if (stats.size === 0) {
+      return 'empty';
+    }
+
+    const hash = crypto.createHash('sha1');
+    const sampleEnd = Math.min(stats.size - 1, CONTEXT_HASH_SAMPLE_BYTES - 1);
+    await new Promise((resolve, reject) => {
+      const stream = fs.createReadStream(fullPath, { start: 0, end: sampleEnd });
+      stream.on('data', (chunk) => hash.update(chunk));
+      stream.on('end', resolve);
+      stream.on('error', reject);
+    });
+    return `${hash.digest('hex')}:${stats.size}:${stats.mtimeMs}`;
+  } catch (error) {
+    console.warn('[WARN] Could not hash file for context metadata:', fullPath, error.message);
+    return `size:${stats.size}|mtime:${stats.mtimeMs}`;
+  }
+}
+
+function createSummaryFromContent(content) {
+  if (!content) {
+    return '';
+  }
+
+  const normalized = content.replace(/\r\n/g, '\n').trim();
+  const lines = normalized.split('\n').slice(0, SUMMARY_MAX_LINES);
+  const joined = lines.join('\n');
+  if (joined.length <= SUMMARY_MAX_LENGTH) {
+    return joined;
+  }
+  return `${joined.slice(0, SUMMARY_MAX_LENGTH)}…`;
 }
 
 // Handler para crear archivos

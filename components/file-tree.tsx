@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from "react"
 import { ChevronDown, ChevronRight, File, Folder, Plus, Settings, FolderOpen, X, Search, RefreshCw, FolderPlus, FilePlus, RotateCcw } from "lucide-react"
 import { useElectron } from "../hooks/use-electron"
 import type { FileItem } from "./flutter-editor"
-import type { AIProvider } from "../lib/ai-service"
+import type { AIProvider, FileContextSnapshot } from "../lib/ai-service"
 
 interface FileTreeProps {
   activeFile: string
@@ -32,6 +32,7 @@ interface FileTreeProps {
   aiProvider?: AIProvider
   onAiProviderChange?: (provider: AIProvider) => void
   onWorkspacePathChange?: (path: string) => void
+  onContextMetadata?: (index: Record<string, FileContextSnapshot>) => void
 }
 
 interface DirectoryEntry {
@@ -48,6 +49,38 @@ interface DirectoryEntry {
   extension?: string // Extensión del archivo
   fileHandle?: any // Para acceso directo al archivo real
   directoryHandle?: any // Para acceso directo al directorio real
+  context?: FileContextSnapshot
+}
+
+const buildContextIndex = (entries: DirectoryEntry[]): Record<string, FileContextSnapshot> => {
+  const index: Record<string, FileContextSnapshot> = {}
+
+  const traverse = (nodes: DirectoryEntry[]) => {
+    nodes.forEach((node) => {
+      if (node.type === "file") {
+        const snapshot: FileContextSnapshot = {
+          path: node.context?.path || node.path,
+          name: node.context?.name || node.name,
+          hash: node.context?.hash,
+          summary: node.context?.summary,
+          preview: node.context?.preview,
+          size: node.context?.size ?? node.size,
+          modified: node.context?.modified ?? (node.modified instanceof Date ? node.modified.getTime() : undefined),
+          extension: node.context?.extension || node.extension,
+          lineCount: node.context?.lineCount,
+        }
+
+        index[node.path] = snapshot
+      }
+
+      if (node.children && node.children.length > 0) {
+        traverse(node.children)
+      }
+    })
+  }
+
+  traverse(entries)
+  return index
 }
 
 // Constantes para optimización
@@ -63,7 +96,7 @@ interface FileCache {
   size: number
 }
 
-export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoadRealFileContent, editorSettings, onSettingsChange, aiProvider, onAiProviderChange, onWorkspacePathChange }: FileTreeProps) {
+export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoadRealFileContent, editorSettings, onSettingsChange, aiProvider, onAiProviderChange, onWorkspacePathChange, onContextMetadata }: FileTreeProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [newFileName, setNewFileName] = useState("")
   const [isCreatingFile, setIsCreatingFile] = useState(false)
@@ -123,6 +156,12 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
   const [hasPersistedData, setHasPersistedData] = useState(false)
   
   const { isElectron } = useElectron()
+
+  useEffect(() => {
+    if (onContextMetadata && directoryStructure.length > 0) {
+      onContextMetadata(buildContextIndex(directoryStructure))
+    }
+  }, [directoryStructure, onContextMetadata])
   
   // Función para limpiar completamente el localStorage
   const clearFileTreeStorage = useCallback(() => {
@@ -200,6 +239,9 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
           try {
             const structure = JSON.parse(savedDirectoryStructure)
             setDirectoryStructure(structure)
+            if (onContextMetadata) {
+              onContextMetadata(buildContextIndex(structure))
+            }
             console.log('[DEBUG] Estructura de directorios restaurada:', structure.length, 'elementos')
           } catch (error) {
             console.error('[DEBUG] Error al restaurar estructura de directorios:', error)
@@ -1413,6 +1455,9 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
             }
             console.log('🔄 [FRONTEND] Setting directory structure...')
             setDirectoryStructure(result.structure)
+            if (onContextMetadata) {
+              onContextMetadata(buildContextIndex(result.structure))
+            }
             setError("")
             console.log('✅ [FRONTEND] Directory structure set successfully')
             console.log('📊 [FRONTEND] Current directoryStructure state length:', directoryStructure.length)
@@ -1443,6 +1488,9 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
         }
         const structure = await readDirectoryRecursively(directoryHandle, "", 0, directoryHandle.name)
         setDirectoryStructure(structure)
+        if (onContextMetadata) {
+          onContextMetadata(buildContextIndex(structure))
+        }
         setWorkingDirectory(directoryHandle.name)
         setIsLoading(false)
       } else {
@@ -1468,6 +1516,9 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
             // Procesar archivos y crear estructura recursiva optimizada
             const structure = processFileListRecursively(files, rootDir)
             setDirectoryStructure(structure)
+            if (onContextMetadata) {
+              onContextMetadata(buildContextIndex(structure))
+            }
             setError("")
             setIsLoading(false)
           }

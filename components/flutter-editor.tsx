@@ -1,12 +1,12 @@
 "use client"
 
-import React, { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import React, { useState, useRef, useCallback, useEffect } from "react"
 import { FileTree } from "./file-tree"
 import { EditorContent } from "./editor-content"
 import { AICommandBar } from "./ai-command-bar"
 import { useElectron } from "../hooks/use-electron"
 import { chatService } from "../lib/chat-service"
-import type { AIProvider } from "../lib/ai-service"
+import type { AIProvider, FileContextSnapshot } from "../lib/ai-service"
 
 export interface FileItem {
   name: string
@@ -15,7 +15,66 @@ export interface FileItem {
   children?: FileItem[]
   isOpen?: boolean
   path: string
+  summary?: string
+  hash?: string
+  preview?: string
+  metadata?: FileContextSnapshot
 }
+
+const SUMMARY_LINE_LIMIT = 12
+const SUMMARY_CHAR_LIMIT = 600
+
+const summarizeContent = (content: string): string => {
+  const normalized = content.replace(/\r\n/g, "\n").trim()
+  if (!normalized) {
+    return ""
+  }
+  const lines = normalized.split("\n").slice(0, SUMMARY_LINE_LIMIT)
+  const joined = lines.join("\n")
+  if (joined.length <= SUMMARY_CHAR_LIMIT) {
+    return joined
+  }
+  return `${joined.slice(0, SUMMARY_CHAR_LIMIT)}…`
+}
+
+const computeContentSignature = (content: string): string => {
+  let hash = 0
+  for (let i = 0; i < content.length; i += 1) {
+    hash = (hash * 31 + content.charCodeAt(i)) >>> 0
+  }
+  const lengthHex = content.length.toString(16)
+  const hashHex = hash.toString(16)
+  return `${lengthHex}-${hashHex}`
+}
+
+const createSnapshotFromContent = (filePath: string, content: string): FileContextSnapshot => {
+  const name = filePath.split("/").pop() || filePath
+  const summary = summarizeContent(content)
+  const hash = computeContentSignature(content)
+  const extension = filePath.includes(".") ? `.${filePath.split(".").pop()?.toLowerCase()}` : undefined
+  return {
+    path: filePath,
+    name,
+    summary,
+    preview: summary,
+    hash,
+    size: content.length,
+    modified: Date.now(),
+    extension,
+  }
+}
+
+const DEFAULT_README_CONTENT = `# En busca de un nuevo proyecto....
+
+## en un lugar uy legano de la galaxya....
+
+este es un proyecto simple de un editor de codigo
+pero por muy simple que parezca ahi es donde 
+reside su fuerza
+
+que la fuerza te acompañe
+          **Anaquin Skywaler**.
+`
 
 export function FlutterEditor() {
   const [activeFile, setActiveFile] = useState<string>("README.md")
@@ -70,51 +129,80 @@ export function FlutterEditor() {
       console.log('Chat service configured for workspace:', workspacePath)
     }
   }, [workspacePath, editorSettings.chatFileName])
-  const [files, setFiles] = useState<Record<string, FileItem>>({
-    "README.md": {
-      name: "README.md",
-      type: "file",
-      path: "README.md",
-      content: `# En busca de un nuevo proyecto....
+  const [files, setFiles] = useState<Record<string, FileItem>>(() => {
+    const snapshot = createSnapshotFromContent("README.md", DEFAULT_README_CONTENT)
+    return {
+      "README.md": {
+        name: "README.md",
+        type: "file",
+        path: "README.md",
+        content: DEFAULT_README_CONTENT,
+        summary: snapshot.summary,
+        hash: snapshot.hash,
+        preview: snapshot.preview,
+        metadata: snapshot,
+      },
+    }
+  })
 
-## en un lugar uy legano de la galaxya....
-
-este es un proyecto simple de un editor de codigo
-pero por muy simple que parezca ahi es donde 
-reside su fuerza
-
-que la fuerza te acompañe
-          **Anaquin Skywaler**.
-`,
-    },
+  const [fileContextIndex, setFileContextIndex] = useState<Record<string, FileContextSnapshot>>(() => {
+    const snapshot = createSnapshotFromContent("README.md", DEFAULT_README_CONTENT)
+    return { "README.md": snapshot }
   })
 
   const updateFileContent = useCallback((filePath: string, content: string) => {
+    const snapshot = createSnapshotFromContent(filePath, content)
     setFiles((prev) => ({
       ...prev,
       [filePath]: {
         ...prev[filePath],
+        name: prev[filePath]?.name || filePath.split("/").pop() || filePath,
+        type: "file",
+        path: filePath,
         content,
+        summary: snapshot.summary,
+        hash: snapshot.hash,
+        preview: snapshot.preview,
+        metadata: snapshot,
+      },
+    }))
+    setFileContextIndex((prev) => ({
+      ...prev,
+      [filePath]: {
+        ...(prev[filePath] || {}),
+        ...snapshot,
       },
     }))
   }, [])
 
   // Function to handle loading real file content from file tree
   const handleLoadRealFileContent = useCallback((filePath: string, content: string) => {
-    // Update the file with real content
+    const snapshot = createSnapshotFromContent(filePath, content)
     setFiles((prev) => ({
       ...prev,
       [filePath]: {
-        name: filePath.split('/').pop() || filePath,
+        name: filePath.split("/").pop() || filePath,
         type: "file",
         path: filePath,
         content,
+        summary: snapshot.summary,
+        hash: snapshot.hash,
+        preview: snapshot.preview,
+        metadata: snapshot,
+      },
+    }))
+    setFileContextIndex((prev) => ({
+      ...prev,
+      [filePath]: {
+        ...(prev[filePath] || {}),
+        ...snapshot,
       },
     }))
   }, [])
 
   const createFile = useCallback((filePath: string, content = "") => {
     const fileName = filePath.split("/").pop() || filePath
+    const snapshot = createSnapshotFromContent(filePath, content)
     setFiles((prev) => ({
       ...prev,
       [filePath]: {
@@ -122,8 +210,74 @@ que la fuerza te acompañe
         type: "file",
         path: filePath,
         content,
+        summary: snapshot.summary,
+        hash: snapshot.hash,
+        preview: snapshot.preview,
+        metadata: snapshot,
       },
     }))
+    setFileContextIndex((prev) => ({
+      ...prev,
+      [filePath]: {
+        ...(prev[filePath] || {}),
+        ...snapshot,
+      },
+    }))
+  }, [])
+
+  const mergeContextIndex = useCallback((incoming: Record<string, FileContextSnapshot>) => {
+    if (!incoming) {
+      return
+    }
+    setFileContextIndex((prev) => {
+      const next = { ...prev }
+      Object.entries(incoming).forEach(([path, snapshot]) => {
+        const fallbackName = snapshot.name || path.split("/").pop() || path
+        next[path] = {
+          ...(prev[path] || {}),
+          ...snapshot,
+          path: snapshot.path || path,
+          name: fallbackName,
+        }
+      })
+      return next
+    })
+    setFiles((prev) => {
+      let mutated = false
+      const next = { ...prev }
+      Object.entries(incoming).forEach(([path, snapshot]) => {
+        if (!next[path]) {
+          return
+        }
+        const currentItem = next[path]
+        const updatedMetadata = {
+          ...(currentItem.metadata || {}),
+          ...snapshot,
+          path: snapshot.path || path,
+          name: snapshot.name || currentItem.name || path.split("/").pop() || path,
+        }
+        const summary = snapshot.summary || currentItem.summary
+        const hash = snapshot.hash || currentItem.hash
+        const preview = snapshot.preview || currentItem.preview
+        if (
+          currentItem.metadata !== updatedMetadata ||
+          currentItem.summary !== summary ||
+          currentItem.hash !== hash ||
+          currentItem.preview !== preview
+        ) {
+          next[path] = {
+            ...currentItem,
+            name: updatedMetadata.name,
+            summary,
+            hash,
+            preview,
+            metadata: updatedMetadata,
+          }
+          mutated = true
+        }
+      })
+      return mutated ? next : prev
+    })
   }, [])
 
   // Function to load real file content from file system
@@ -192,6 +346,10 @@ que la fuerza te acompañe
     // The FileTree component will handle loading the real content via handleLoadRealFileContent
     setActiveFile(filePath)
   }, [])
+
+  const handleContextMetadata = useCallback((incoming: Record<string, FileContextSnapshot>) => {
+    mergeContextIndex(incoming)
+  }, [mergeContextIndex])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     setIsResizing(true)
@@ -302,6 +460,7 @@ que la fuerza te acompañe
               aiProvider={aiProvider}
               onAiProviderChange={setAiProvider}
               onWorkspacePathChange={setWorkspacePath}
+              onContextMetadata={handleContextMetadata}
             />
           </div>
           {/* Resize Handle - solo visible cuando no está colapsado */}
@@ -337,6 +496,7 @@ que la fuerza te acompañe
         aiProvider={aiProvider}
         chatFileName={editorSettings.chatFileName}
         onSelectFile={handleFileSelect}
+        fileContextIndex={fileContextIndex}
       />
     </div>
   )

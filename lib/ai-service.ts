@@ -1,4 +1,16 @@
 // AI Service for communicating with multiple AI providers
+export interface FileContextSnapshot {
+  path: string;
+  name: string;
+  hash?: string;
+  summary?: string;
+  preview?: string;
+  size?: number;
+  modified?: number;
+  extension?: string;
+  lineCount?: number;
+}
+
 export interface EditorChatRequest {
   message: string;
   active_file?: string;
@@ -6,6 +18,18 @@ export interface EditorChatRequest {
   selected_text?: string;
   has_selection: boolean;
   max_tokens?: number;
+  intent?: string;
+  original_user_message?: string;
+  context?: {
+    activeFile?: FileContextSnapshot;
+    relatedFiles?: FileContextSnapshot[];
+    selection?: {
+      text: string;
+      summary?: string;
+      truncated?: boolean;
+      original_length?: number;
+    };
+  };
 }
 
 export interface AIProvider {
@@ -45,6 +69,105 @@ class AIService {
     return this.provider;
   }
 
+  private buildPrompt(request: EditorChatRequest): string {
+    if (request.message.includes('---\nProject Context')) {
+      return request.message;
+    }
+
+    const userIntent = request.intent || request.message;
+    const rawUserInput = request.original_user_message || userIntent;
+
+    if (request.context) {
+      const sections: string[] = [];
+      const { activeFile, relatedFiles, selection } = request.context;
+
+      if (activeFile) {
+        const activeSummary = activeFile.summary || activeFile.preview || this.summarizeForPrompt(request.file_content);
+        const lines = [
+          `Path: ${activeFile.path}`,
+          activeFile.hash ? `Hash: ${activeFile.hash}` : null,
+          activeFile.extension ? `Extension: ${activeFile.extension}` : null,
+        ].filter(Boolean);
+        const summaryBlock = activeSummary ? `Summary:\n${this.truncate(activeSummary, 800)}` : 'Summary: (not available)';
+        sections.push(`## Active File\n${lines.join('\n')}\n${summaryBlock}`);
+      } else if (request.active_file && request.file_content) {
+        const fallbackSummary = this.summarizeForPrompt(request.file_content);
+        if (fallbackSummary) {
+          sections.push(`## Active File\nPath: ${request.active_file}\nSummary:\n${fallbackSummary}`);
+        }
+      }
+
+      if (relatedFiles && relatedFiles.length > 0) {
+        const relatedSummaries = relatedFiles
+          .slice(0, 5)
+          .map((file, index) => {
+            const header = `${index + 1}. ${file.path}${file.hash ? ` (hash: ${file.hash})` : ''}`;
+            const summary = file.summary || file.preview;
+            return summary ? `${header}\n${this.truncate(summary, 500)}` : `${header}\nSummary: (not available)`;
+          })
+          .join('\n\n');
+
+        if (relatedSummaries) {
+          sections.push(`## Related Files\n${relatedSummaries}`);
+        }
+      }
+
+      if (selection?.text) {
+        const selectionPreview = this.truncate(selection.text, 1500);
+        sections.push(`## Current Selection\n\`\`\`\n${selectionPreview}\n\`\`\``);
+      } else if (request.has_selection && request.selected_text) {
+        const selectionPreview = this.truncate(request.selected_text, 1500);
+        sections.push(`## Current Selection\n\`\`\`\n${selectionPreview}\n\`\`\``);
+      }
+
+      sections.push(`## Task\n${userIntent}`);
+
+      if (rawUserInput && rawUserInput !== userIntent) {
+        sections.push(`## Original User Input\n${rawUserInput}`);
+      }
+
+      sections.push('## Response Notes\n- Focus on the task above.\n- Do not repeat the context.');
+
+      return sections.join('\n\n');
+    }
+
+    if (request.has_selection && request.selected_text) {
+      const selectionPreview = this.truncate(request.selected_text, 1500);
+      return `## Active File\n${request.active_file || 'Unknown file'}\n\n## Selected Code\n\`\`\`\n${selectionPreview}\n\`\`\`\n\n## Task\n${userIntent}`;
+    }
+
+    if (request.active_file && request.file_content) {
+      const fallbackSummary = this.summarizeForPrompt(request.file_content);
+      if (fallbackSummary) {
+        return `## Active File\n${request.active_file}\n\n${fallbackSummary}\n\n## Task\n${userIntent}`;
+      }
+    }
+
+    return userIntent;
+  }
+
+  private summarizeForPrompt(content?: string | null): string | undefined {
+    if (!content) {
+      return undefined;
+    }
+
+    const normalized = content.replace(/\r\n/g, '\n').trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const lines = normalized.split('\n').slice(0, 12);
+    const condensed = lines.join('\n');
+    return this.truncate(condensed, 800);
+  }
+
+  private truncate(text: string, limit: number): string {
+    if (text.length <= limit) {
+      return text;
+    }
+    return `${text.slice(0, limit)}…`;
+  }
+
   async sendEditorChat(request: EditorChatRequest): Promise<EditorChatResponse> {
     try {
       if (this.provider.type === 'local') {
@@ -62,12 +185,17 @@ class AIService {
 
   private async sendLocalRequest(request: EditorChatRequest): Promise<EditorChatResponse> {
     const baseUrl = this.provider.baseUrl || 'http://localhost:8080';
+    const payload = {
+      ...request,
+      message: this.buildPrompt(request),
+    };
+
     const response = await fetch(`${baseUrl}/ai/editor-chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -108,14 +236,7 @@ class AIService {
     this.provider.apiKey = trimmedKey;
 
     const model = this.provider.model || 'meta-llama/llama-3.1-8b-instruct:free';
-    
-    // Build the prompt based on context
-    let prompt = request.message;
-    if (request.has_selection && request.selected_text) {
-      prompt = `The user has selected the following code/text from file '${request.active_file}':\n\n\`\`\`\n${request.selected_text}\n\`\`\`\n\nUser question: ${request.message}\n\nPlease provide a response that directly addresses the selected code.`;
-    } else if (request.active_file && request.file_content) {
-      prompt = `The user is working on file '${request.active_file}' with the following content:\n\n\`\`\`\n${request.file_content}\n\`\`\`\n\nUser question: ${request.message}\n\nPlease provide a helpful response related to this file.`;
-    }
+    const prompt = this.buildPrompt(request);
 
     try {
       console.log('Sending request to OpenRouter with model:', model);
