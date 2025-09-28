@@ -16,8 +16,6 @@ interface EditorSettings {
   chatFileName: string
   chatDirectory: string
   autosave: boolean
-  autocomplete: boolean
-  aiAutocomplete: boolean
 }
 
 type BooleanEditorSetting =
@@ -27,8 +25,6 @@ type BooleanEditorSetting =
   | 'autoResponses'
   | 'codeSuggestions'
   | 'autosave'
-  | 'autocomplete'
-  | 'aiAutocomplete'
 
 export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   lineNumbers: true,
@@ -39,8 +35,6 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   chatFileName: "chat.md",
   chatDirectory: "chats",
   autosave: true,
-  autocomplete: true,
-  aiAutocomplete: false,
 }
 
 export type { EditorSettings }
@@ -2312,29 +2306,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
               </div>
             </div>
 
-            <div>
-              <h3 className="text-sm font-medium text-white mb-3">Autocompletado</h3>
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={currentSettings.autocomplete}
-                    onChange={() => handleSettingChange('autocomplete')}
-                    className="rounded"
-                  />
-                  Sugerencias en el editor
-                </label>
-                <label className="flex items-center gap-2 text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={currentSettings.aiAutocomplete}
-                    onChange={() => handleSettingChange('aiAutocomplete')}
-                    className="rounded"
-                  />
-                  Sugerencias con AI
-                </label>
-              </div>
-            </div>
+
 
             <div>
               <h3 className="text-sm font-medium text-white mb-3">AI Assistant</h3>
