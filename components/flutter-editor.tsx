@@ -368,6 +368,22 @@ export function FlutterEditor() {
     mergeContextIndex(incoming)
   }, [mergeContextIndex])
 
+  const saveFile = useCallback(async (filePath: string, content: string) => {
+    if (isElectron && (window as any).electronAPI) {
+      try {
+        const result = await (window as any).electronAPI.saveFile(filePath, content);
+        if (result.success) {
+          console.log(`File saved: ${filePath}`);
+          // Optionally, you can update the file hash or other metadata here
+        } else {
+          console.error(`Error saving file: ${result.error}`);
+        }
+      } catch (error) {
+        console.error('Error calling saveFile:', error);
+      }
+    }
+  }, [isElectron]);
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     setIsResizing(true)
     e.preventDefault()
@@ -500,6 +516,7 @@ export function FlutterEditor() {
             onCreateFile={createFile}
             onLoadFileContent={loadFileContent}
             editorSettings={editorSettings}
+            onSaveFile={saveFile}
           />
         </div>
       </div>

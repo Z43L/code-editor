@@ -7,6 +7,10 @@ import type { Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type { FileItem } from "./flutter-editor"
 import { fileDiffService } from "../lib/file-diff"
+import { aiService } from "../lib/ai-service"
+import type { EditorChatRequest } from "../lib/ai-service"
+
+import type { EditorSettings } from "./file-tree"
 
 interface EditorContentProps {
   file?: FileItem
@@ -14,13 +18,8 @@ interface EditorContentProps {
   files: Record<string, FileItem>
   onCreateFile: (filePath: string, content: string) => void
   onLoadFileContent?: (filePath: string) => Promise<string>
-  editorSettings?: {
-    lineNumbers: boolean
-    syntaxHighlighting: boolean
-    wordWrap: boolean
-    autoResponses: boolean
-    codeSuggestions: boolean
-  }
+  editorSettings?: EditorSettings
+  onSaveFile?: (filePath: string, content: string) => void
 }
 
 const getLanguageFromExtension = (filename: string): string => {
@@ -521,7 +520,7 @@ const highlightSyntax = (code: string, language: string): string => {
   return highlighted
 }
 
-export function EditorContent({ file, onContentChange, files, onCreateFile, onLoadFileContent, editorSettings }: EditorContentProps) {
+export function EditorContent({ file, onContentChange, files, onCreateFile, onLoadFileContent, editorSettings, onSaveFile }: EditorContentProps) {
   const [content, setContent] = useState(file?.content || "")
   const [selectedText, setSelectedText] = useState("")
   const [selectionStart, setSelectionStart] = useState(0)
@@ -529,6 +528,9 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved")
   const [scrollTop, setScrollTop] = useState(0)
   const [viewMode, setViewMode] = useState<"edit" | "preview">("edit")
+  const [suggestions, setSuggestions] = useState<Array<{ text: string; type: 'std' | 'ai' }>>([])
+  const [suggestionIndex, setSuggestionIndex] = useState(0)
+  const [showSuggestions, setShowSuggestions] = useState(false)
   
   // Undo/Redo history state
   const [history, setHistory] = useState<string[]>([file?.content || ""])
@@ -545,6 +547,9 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
     wordWrap: false,
     autoResponses: true,
     codeSuggestions: true,
+    autosave: true,
+    autocomplete: true,
+    aiAutocomplete: false,
   }
 
   const fileName = file?.name ?? ""
@@ -701,42 +706,179 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
     setIsUndoRedo(false)
   }, [file])
 
-  // Keyboard shortcuts
+  // Autocomplete logic
+  useEffect(() => {
+    const getSuggestions = async () => {
+      if ((!settings.autocomplete && !settings.aiAutocomplete) || !textareaRef.current) {
+        setShowSuggestions(false);
+        return;
+      }
+
+      const cursorPosition = textareaRef.current.selectionStart;
+      const textBeforeCursor = content.substring(0, cursorPosition);
+      const wordMatch = textBeforeCursor.match(/(\S+)$/);
+      const currentWord = wordMatch ? wordMatch[1] : '';
+
+      if (currentWord.length < 2) {
+        setShowSuggestions(false);
+        return;
+      }
+
+      let allSuggestions: Array<{ text: string; type: 'std' | 'ai' }> = [];
+
+      // AI suggestions
+      if (settings.aiAutocomplete) {
+        const codeBeforeCursor = content.substring(0, cursorPosition);
+        const codeAfterCursor = content.substring(cursorPosition);
+
+        const request: EditorChatRequest = {
+          message: `You are a code completion assistant. Given the code context, provide a single, short completion for the current word/line. Return only the code completion itself, no explanations or markdown.
+### Code before cursor:
+${codeBeforeCursor}
+### Code after cursor:
+${codeAfterCursor}
+`,
+          active_file: file?.path,
+          file_content: content,
+          has_selection: false,
+          intent: 'code_completion',
+          max_tokens: 20,
+        };
+
+        try {
+          const response = await aiService.sendEditorChat(request);
+          let suggestionText = response.message.trim().split('\n')[0]; // Take first line
+          if (suggestionText && suggestionText.toLowerCase() !== currentWord.toLowerCase()) {
+            allSuggestions.push({ text: suggestionText, type: 'ai' });
+          }
+        } catch (error) {
+          console.error("AI suggestion error:", error);
+        }
+      }
+
+      // Standard suggestions
+      if (settings.autocomplete) {
+        const allWords = content.match(/\b(\w+)\b/g) || [];
+        const uniqueWords = [...new Set(allWords)];
+        const filteredSuggestions = uniqueWords.filter(word =>
+          word.toLowerCase().startsWith(currentWord.toLowerCase()) &&
+          word.toLowerCase() !== currentWord.toLowerCase() &&
+          !allSuggestions.some(s => s.text === word) // avoid duplicates
+        ).slice(0, 5).map(s => ({ text: s, type: 'std' as const }));
+        allSuggestions.push(...filteredSuggestions);
+      }
+
+      if (allSuggestions.length > 0) {
+        setSuggestions(allSuggestions);
+        setShowSuggestions(true);
+        setSuggestionIndex(0);
+      } else {
+        setShowSuggestions(false);
+      }
+    };
+
+    // Debounce the suggestion fetching
+    const timeoutId = setTimeout(getSuggestions, settings.aiAutocomplete ? 800 : 200);
+    return () => clearTimeout(timeoutId);
+
+  }, [content, settings.autocomplete, settings.aiAutocomplete, file]);
+
+  const applySuggestion = (suggestion: { text: string; type: 'std' | 'ai' }) => {
+    if (!textareaRef.current) return;
+
+    const suggestionText = suggestion.text;
+    const cursorPosition = textareaRef.current.selectionStart;
+    const textBeforeCursor = content.substring(0, cursorPosition);
+    const wordMatch = textBeforeCursor.match(/(\S+)$/);
+    const currentWord = wordMatch ? wordMatch[1] : '';
+
+    const newContent =
+      content.substring(0, cursorPosition - currentWord.length) +
+      suggestionText + " " +
+      content.substring(cursorPosition);
+
+    handleContentChange(newContent);
+    setShowSuggestions(false);
+
+    // Move cursor to the end of the inserted word
+    setTimeout(() => {
+      if (textareaRef.current) {
+        const newCursorPosition = cursorPosition - currentWord.length + suggestionText.length + 1;
+        textareaRef.current.selectionStart = newCursorPosition;
+        textareaRef.current.selectionEnd = newCursorPosition;
+      }
+    }, 0);
+  };
+
+  // Keyboard shortcuts & Autosave
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === 's') {
-        e.preventDefault()
-        saveFile()
-      } else if (e.ctrlKey && e.shiftKey && e.key === 'Z') {
-        e.preventDefault()
-        redo()
-      } else if (e.ctrlKey && e.key === 'z') {
-        e.preventDefault()
-        undo()
+      if (showSuggestions) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSuggestionIndex(prev => (prev + 1) % suggestions.length);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSuggestionIndex(prev => (prev - 1 + suggestions.length) % suggestions.length);
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          if (suggestions[suggestionIndex]) {
+            applySuggestion(suggestions[suggestionIndex]);
+          }
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          setShowSuggestions(false);
+        }
+        return; // Stop further processing
       }
+
+      if (e.ctrlKey && e.key === 's') {
+        e.preventDefault();
+        if (file) {
+          saveFile(file.path, content);
+        }
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'Z') {
+        e.preventDefault();
+        redo();
+      } else if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        undo();
+      }
+    };
+
+    const target = textareaRef.current;
+    target?.addEventListener('keydown', handleKeyDown);
+
+    let autosaveTimeout: NodeJS.Timeout;
+    if (settings.autosave && saveStatus === 'unsaved' && file) {
+      autosaveTimeout = setTimeout(() => {
+        saveFile(file.path, content);
+      }, 1500);
     }
 
-    document.addEventListener('keydown', handleKeyDown)
     return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [file, undo, redo])
+      target?.removeEventListener('keydown', handleKeyDown);
+      clearTimeout(autosaveTimeout);
+    };
+  }, [file, content, settings.autosave, saveStatus, undo, redo, saveFile, showSuggestions, suggestions, suggestionIndex]);
 
-  const saveFile = async () => {
-    if (!file) return
-    
-    setSaveStatus("saving")
-    
-    // Simulate save delay
-    await new Promise(resolve => setTimeout(resolve, 200))
-    
-    setSaveStatus("saved")
-    
-    // Hide save status after 2 seconds
-    setTimeout(() => {
-      setSaveStatus("saved")
-    }, 2000)
-  }
+  const saveFile = useCallback(async (filePath: string, fileContent: string) => {
+    if (!onSaveFile) return;
+
+    setSaveStatus("saving");
+    try {
+      await onSaveFile(filePath, fileContent);
+      setSaveStatus("saved");
+      setTimeout(() => {
+        // You might want to remove this if you want the "saved" status to be persistent
+        // until the next change.
+        // setSaveStatus("saved");
+      }, 2000);
+    } catch (error) {
+      console.error("Failed to save file:", error);
+      setSaveStatus("unsaved");
+    }
+  }, [onSaveFile]);
 
   const handleTextSelection = useCallback(() => {
     if (textareaRef.current) {
@@ -959,6 +1101,28 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
                   {content}
                 </ReactMarkdown>
               </div>
+            </div>
+          )}
+          {showSuggestions && (
+            <div className="absolute z-20 bg-[#2d2d30] border border-[#3e3e3e] rounded-md shadow-lg"
+                 style={{
+                   top: `calc(${lines.length * 1.5}em + 10px)`, // Position below the text
+                   left: '10px',
+                   maxHeight: '150px',
+                   overflowY: 'auto'
+                 }}>
+              <ul className="text-sm text-white">
+                {suggestions.map((suggestion, index) => (
+                  <li
+                    key={index}
+                    className={`px-3 py-1 cursor-pointer flex items-center justify-between ${index === suggestionIndex ? 'bg-[#0e639c]' : 'hover:bg-[#3e3e3e]'}`}
+                    onClick={() => applySuggestion(suggestion)}
+                  >
+                    <span>{suggestion.text}</span>
+                    {suggestion.type === 'ai' && <span className="text-xs text-purple-400 ml-2">[AI]</span>}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
