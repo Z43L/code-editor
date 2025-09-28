@@ -1,726 +1,372 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Book, BookOpen, Save } from "lucide-react"
-import ReactMarkdown from "react-markdown"
-import type { Components } from "react-markdown"
-import remarkGfm from "remark-gfm"
-import type { FileItem } from "./flutter-editor"
-import { fileDiffService } from "../lib/file-diff"
-import { aiService } from "../lib/ai-service"
-import type { EditorChatRequest } from "../lib/ai-service"
+import hljs from 'highlight.js/lib/core'
+import 'highlight.js/styles/github-dark.css'
+// @ts-ignore
+// import { Linter } from 'eslint4b'
+import { Save } from "lucide-react"
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
-import type { EditorSettings } from "./file-tree"
 
+// const jsTsLinter = new Linter();
+
+// Tipo para errores de sintaxis
+type SyntaxError = {
+  line: number;
+  message: string;
+};
+
+// Placeholder para fileDiffService (debería importarse de lib/file-diff si existe)
+const fileDiffService = {
+  smartCodeReplacement: (content: string, selected: string, replacement: string) => content.replace(selected, replacement),
+  createTempFile: (oldContent: string, newContent: string, path: string) => ({ oldContent, newContent, path })
+};
+
+// Mapeo de lenguajes soportados para carga dinámica
+const languageImportMap: Record<string, () => Promise<any>> = {
+  javascript: () => import('highlight.js/lib/languages/javascript'),
+  typescript: () => import('highlight.js/lib/languages/typescript'),
+  python: () => import('highlight.js/lib/languages/python'),
+  go: () => import('highlight.js/lib/languages/go'),
+  java: () => import('highlight.js/lib/languages/java'),
+  cpp: () => import('highlight.js/lib/languages/cpp'),
+  xml: () => import('highlight.js/lib/languages/xml'),
+  html: () => import('highlight.js/lib/languages/xml'),
+  css: () => import('highlight.js/lib/languages/css'),
+  json: () => import('highlight.js/lib/languages/json'),
+  markdown: () => import('highlight.js/lib/languages/markdown'),
+  bash: () => import('highlight.js/lib/languages/bash'),
+  php: () => import('highlight.js/lib/languages/php'),
+  ruby: () => import('highlight.js/lib/languages/ruby'),
+}
+
+// Función para registrar el lenguaje dinámicamente si no está registrado
+const ensureLanguageRegistered = async (language: string) => {
+  if (!language || language === 'text' || hljs.getLanguage(language)) return
+  const importer = languageImportMap[language]
+  if (importer) {
+    try {
+      const mod = await importer()
+      hljs.registerLanguage(language, mod.default)
+    } catch (e) {
+      // No hacer nada si falla
+    }
+  }
+}
+
+// Detección de lenguaje por extensión
+const getLanguageFromExtension = (filename: string = ""): string => {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'js': return 'javascript';
+    case 'ts': return 'typescript';
+    case 'py': return 'python';
+    case 'go': return 'go';
+    case 'java': return 'java';
+    case 'c':
+    case 'cpp':
+    case 'cc':
+    case 'cxx':
+    case 'h':
+    case 'hpp': return 'cpp';
+    case 'html': return 'html';
+    case 'xml': return 'xml';
+    case 'css': return 'css';
+    case 'json': return 'json';
+    case 'md': return 'markdown';
+    case 'sh': return 'bash';
+    case 'php': return 'php';
+    case 'rb': return 'ruby';
+    default: return 'text';
+  }
+};
+
+// Cálculo de número de líneas
+const getLineCount = (content: string) => (content.match(/\n/g)?.length ?? 0) + 1;
+
+// Highlight.js integration - versión línea por línea
+const useHighlightContent = (code: string, language: string, settings: { syntaxHighlighting: boolean }) => {
+  const [highlighted, setHighlighted] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    const doHighlight = async () => {
+      if (!settings.syntaxHighlighting) {
+        setHighlighted(code);
+        return;
+      }
+      await ensureLanguageRegistered(language);
+      try {
+        if (hljs.getLanguage(language)) {
+          const result = hljs.highlight(code, { language });
+          setHighlighted(result.value);
+        } else {
+          const result = hljs.highlightAuto(code);
+          setHighlighted(result.value);
+        }
+      } catch {
+        setHighlighted(code);
+      }
+    };
+    doHighlight();
+    return () => { cancelled = true; };
+  }, [code, language, settings.syntaxHighlighting]);
+  return highlighted;
+};
+
+// Función para resaltar línea por línea
+const useHighlightLines = (lines: string[], language: string, settings: { syntaxHighlighting: boolean }) => {
+  const [highlightedLines, setHighlightedLines] = useState<string[]>(lines);
+
+  useEffect(() => {
+    let cancelled = false;
+    const doHighlight = async () => {
+      if (!settings.syntaxHighlighting) {
+        setHighlightedLines(lines);
+        return;
+      }
+
+      await ensureLanguageRegistered(language);
+      try {
+        const hlLines = await Promise.all(lines.map(async (line) => {
+          if (!line.trim()) return line; // Mantener líneas vacías como están
+          if (hljs.getLanguage(language)) {
+            const result = hljs.highlight(line, { language });
+            return result.value;
+          } else {
+            const result = hljs.highlightAuto(line);
+            return result.value;
+          }
+        }));
+        if (!cancelled) {
+          setHighlightedLines(hlLines);
+        }
+      } catch {
+        if (!cancelled) {
+          setHighlightedLines(lines);
+        }
+      }
+    };
+    doHighlight();
+    return () => { cancelled = true; };
+  }, [lines, language, settings.syntaxHighlighting]);
+
+  return highlightedLines;
+};
+
+// --- Declaración del componente principal ---
 interface EditorContentProps {
-  file?: FileItem
-  onContentChange: (content: string) => void
-  files: Record<string, FileItem>
-  onCreateFile: (filePath: string, content: string) => void
-  onLoadFileContent?: (filePath: string) => Promise<string>
-  editorSettings?: EditorSettings
-  onSaveFile?: (filePath: string, content: string) => void
-  onSaveAllFiles?: () => Promise<void>
+  file: { name: string; path: string; content?: string } | null;
+  onContentChange: (content: string) => void;
+  onSaveFile?: (path: string, content: string) => Promise<void>;
+  onSaveAllFiles?: () => Promise<void>;
+  onLoadFileContent?: (path: string) => Promise<string>;
+  settings: {
+    autosave: boolean;
+    syntaxHighlighting: boolean;
+    wordWrap: boolean;
+  };
+  showLineNumbers?: boolean;
+  viewMode?: 'edit' | 'preview';
 }
 
-const getLanguageFromExtension = (filename: string): string => {
-  const extension = filename.split(".").pop()?.toLowerCase()
-  const languageMap: Record<string, string> = {
-    // Web Technologies
-    js: "javascript",
-    jsx: "jsx",
-    ts: "typescript",
-    tsx: "tsx",
-    vue: "vue",
-    svelte: "svelte",
-    html: "html",
-    htm: "html",
-    css: "css",
-    scss: "scss",
-    sass: "sass",
-    less: "less",
-    
-    // Backend Languages
-    py: "python",
-    pyw: "python",
-    go: "go",
-    rs: "rust",
-    rb: "ruby",
-    php: "php",
-    java: "java",
-    kt: "kotlin",
-    scala: "scala",
-    cs: "csharp",
-    fs: "fsharp",
-    vb: "vbnet",
-    
-    // Systems Programming
-    c: "c",
-    cpp: "cpp",
-    cc: "cpp",
-    cxx: "cpp",
-    h: "c",
-    hpp: "cpp",
-    asm: "assembly",
-    s: "assembly",
-    
-    // Functional Languages
-    hs: "haskell",
-    elm: "elm",
-    ex: "elixir",
-    exs: "elixir",
-    clj: "clojure",
-    cljs: "clojure",
-    ml: "ocaml",
-    
-    // Data & Config
-    json: "json",
-    yaml: "yaml",
-    yml: "yaml",
-    xml: "xml",
-    toml: "toml",
-    ini: "ini",
-    cfg: "ini",
-    conf: "ini",
-    
-    // Database
-    sql: "sql",
-    
-    // Scripting
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    fish: "bash",
-    ps1: "powershell",
-    psm1: "powershell",
-    lua: "lua",
-    
-    // Mobile
-    dart: "dart",
-    swift: "swift",
-    m: "objectivec",
-    mm: "objectivec",
-    
-    // Documentation
-    md: "markdown",
-    markdown: "markdown",
-    rst: "rst",
-    tex: "latex",
-    
-    // Other
-    r: "r",
-    jl: "julia",
-    nim: "nim",
-    zig: "zig",
-    v: "vlang",
-    cr: "crystal",
-    d: "dlang",
-  }
-  return languageMap[extension || ""] || "text"
-}
+const EditorContent: React.FC<EditorContentProps> = ({
+  file,
+  onContentChange,
+  onSaveFile,
+  onSaveAllFiles,
+  onLoadFileContent,
+  settings,
+  showLineNumbers = true,
+  viewMode = 'edit',
+}) => {
+  // --- Estados principales ---
+  const [content, setContent] = useState(file?.content || "");
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'unsaved' | 'saving'>("saved");
+  const [lastSavedContent, setLastSavedContent] = useState(file?.content || "");
+  const [currentFilePath, setCurrentFilePath] = useState(file?.path || "");
+  const [history, setHistory] = useState<string[]>([file?.content || ""]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const [isUndoRedo, setIsUndoRedo] = useState(false);
+  const [selectedText, setSelectedText] = useState("");
+  const [selectionStart, setSelectionStart] = useState(0);
+  const [selectionEnd, setSelectionEnd] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [showEditor, setShowEditor] = useState(true);
+  const [editorTextSizeClass] = useState('text-sm');
+  const [isMarkdown, setIsMarkdown] = useState(() => file?.name?.endsWith('.md') || false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  // Estado para errores de sintaxis
+  const [syntaxErrors, setSyntaxErrors] = useState<SyntaxError[]>([]);
+  // ---
 
-// Optimized syntax highlighting with memoization
-const highlightSyntax = (code: string, language: string): string => {
-  if (language === "text" || !code) return code
-
-  // Limit highlighting for very large files to improve performance
-  if (code.length > 50000) {
-    return code // Skip highlighting for very large files
-  }
-
-  // First escape HTML characters
-  let highlighted = code
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-
-  // Helper function to create string patterns for escaped HTML
-  const createStringPatterns = () => [
-    { regex: /(&quot;)(?:(?!&quot;)[^\\]|\\.)*(&quot;)/g, className: "text-yellow-300" },
-    { regex: /(&#39;)(?:(?!&#39;)[^\\]|\\.)*(\&#39;)/g, className: "text-yellow-300" },
-    { regex: /(`)[^`]*(`)/g, className: "text-yellow-300" },
-  ]
-
-  const patterns: Record<string, Array<{ regex: RegExp; className: string }>> = {
-    javascript: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      ...createStringPatterns(),
-      {
-        regex: /\b(function|const|let|var|if|else|for|while|return|class|extends|import|export|from|default|async|await|try|catch|finally|throw|new|this|super|static|public|private|protected)\b/g,
-        className: "text-blue-400",
-      },
-      { regex: /\b(true|false|null|undefined|NaN|Infinity)\b/g, className: "text-purple-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    typescript: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      ...createStringPatterns(),
-      {
-        regex: /\b(function|const|let|var|if|else|for|while|return|class|extends|import|export|from|default|async|await|try|catch|finally|throw|new|this|super|static|public|private|protected|interface|type|enum|namespace|declare|readonly|keyof|typeof)\b/g,
-        className: "text-blue-400",
-      },
-      {
-        regex: /\b(true|false|null|undefined|NaN|Infinity|string|number|boolean|object|any|void|never)\b/g,
-        className: "text-purple-400",
-      },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    python: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      ...createStringPatterns(),
-      { regex: /("""|\'\'\')[\s\S]*?\1/g, className: "text-yellow-300" },
-      {
-        regex: /\b(def|class|if|elif|else|for|while|return|import|from|as|try|except|finally|raise|with|lambda|yield|global|nonlocal|assert|break|continue|pass|and|or|not|in|is)\b/g,
-        className: "text-blue-400",
-      },
-      { regex: /\b(True|False|None|self|cls)\b/g, className: "text-purple-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    css: [
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      ...createStringPatterns(),
-      { regex: /[.#][\w-]+/g, className: "text-blue-400" },
-      { regex: /\b\d+\.?\d*(px|em|rem|%|vh|vw|pt|pc|in|cm|mm|ex|ch|vmin|vmax|fr)\b/g, className: "text-orange-400" },
-    ],
-    html: [
-      { regex: /&lt;!--[\s\S]*?--&gt;/g, className: "text-green-400" },
-      { regex: /&lt;\/?[\w\s=&quot;&#39;/.':;#-\/\?]+&gt;/g, className: "text-blue-400" },
-      ...createStringPatterns(),
-    ],
-
-    svelte: [
-      { regex: /<!--[\s\S]*?-->/g, className: "text-green-400" },
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      { regex: /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]*)?\/?>/g, className: "text-blue-400" },
-      { regex: /\s([a-zA-Z-:]+)=/g, className: "text-yellow-400" },
-      { regex: /\{[^}]*\}/g, className: "text-pink-400" },
-      ...createStringPatterns(),
-      { regex: /\b(export|default|import|from|const|let|var|function|if|else|for|while|return|async|await|onMount|onDestroy|createEventDispatcher)\b/g, className: "text-blue-400" },
-    ],
-    scss: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      { regex: /\$[\w-]+/g, className: "text-purple-400" },
-      { regex: /@[\w-]+/g, className: "text-cyan-400" },
-      { regex: /[.#&][\w-]+/g, className: "text-blue-400" },
-      ...createStringPatterns(),
-      { regex: /\b\d+\.?\d*(px|em|rem|%|vh|vw|pt|pc|in|cm|mm|ex|ch|vmin|vmax|fr)\b/g, className: "text-orange-400" },
-    ],
-    sass: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      { regex: /\$[\w-]+/g, className: "text-purple-400" },
-      { regex: /@[\w-]+/g, className: "text-cyan-400" },
-      { regex: /[.#&][\w-]+/g, className: "text-blue-400" },
-      ...createStringPatterns(),
-      { regex: /\b\d+\.?\d*(px|em|rem|%|vh|vw|pt|pc|in|cm|mm|ex|ch|vmin|vmax|fr)\b/g, className: "text-orange-400" },
-    ],
-    less: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      { regex: /@[\w-]+/g, className: "text-purple-400" },
-      { regex: /[.#&][\w-]+/g, className: "text-blue-400" },
-      ...createStringPatterns(),
-      { regex: /\b\d+\.?\d*(px|em|rem|%|vh|vw|pt|pc|in|cm|mm|ex|ch|vmin|vmax|fr)\b/g, className: "text-orange-400" },
-    ],
-    
-    // Backend Languages
-    go: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      ...createStringPatterns(),
-      { regex: /\b(package|import|func|var|const|type|struct|interface|if|else|for|range|switch|case|default|return|go|defer|chan|select|break|continue|fallthrough|goto)\b/g, className: "text-blue-400" },
-      { regex: /\b(true|false|nil|iota)\b/g, className: "text-purple-400" },
-      { regex: /\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|complex64|complex128|byte|rune|string|bool|error)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    rust: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      ...createStringPatterns(),
-      { regex: /\b(fn|let|mut|const|static|struct|enum|impl|trait|for|in|while|loop|if|else|match|return|break|continue|mod|pub|use|crate|super|self|where|unsafe|async|await|move)\b/g, className: "text-blue-400" },
-      { regex: /\b(true|false|None|Some|Ok|Err|Self)\b/g, className: "text-purple-400" },
-      { regex: /\b(i8|i16|i32|i64|i128|isize|u8|u16|u32|u64|u128|usize|f32|f64|bool|char|str|String|Vec|Option|Result)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    ruby: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      ...createStringPatterns(),
-      { regex: /\b(def|class|module|if|elsif|else|unless|case|when|for|in|while|until|do|end|return|yield|break|next|redo|retry|rescue|ensure|raise|begin|super|self|nil|true|false|and|or|not)\b/g, className: "text-blue-400" },
-      { regex: /@[\w_]+/g, className: "text-purple-400" },
-      { regex: /@@[\w_]+/g, className: "text-purple-400" },
-      { regex: /\$[\w_]+/g, className: "text-purple-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    kotlin: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      ...createStringPatterns(),
-      { regex: /\b(fun|val|var|class|object|interface|enum|if|else|when|for|while|do|return|break|continue|try|catch|finally|throw|package|import|public|private|protected|internal|open|final|abstract|override|companion|data|sealed)\b/g, className: "text-blue-400" },
-      { regex: /\b(true|false|null|this|super)\b/g, className: "text-purple-400" },
-      { regex: /\b(Int|Long|Short|Byte|Double|Float|Boolean|Char|String|Unit|Any|Nothing)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    scala: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      ...createStringPatterns(),
-      { regex: /\b(def|val|var|class|object|trait|case|if|else|match|for|while|do|return|yield|try|catch|finally|throw|package|import|extends|with|override|abstract|final|sealed|implicit|lazy)\b/g, className: "text-blue-400" },
-      { regex: /\b(true|false|null|this|super|None|Some|Nil)\b/g, className: "text-purple-400" },
-      { regex: /\b(Int|Long|Short|Byte|Double|Float|Boolean|Char|String|Unit|Any|Nothing|List|Array|Map|Set|Option)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    fsharp: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\(\*[\s\S]*?\*\)/g, className: "text-green-400" },
-      ...createStringPatterns(),
-      { regex: /\b(let|and|rec|in|fun|function|match|with|if|then|else|elif|for|to|downto|while|do|done|try|finally|exception|raise|type|module|open|namespace|struct|sig|end|begin|when|as|upcast|downcast|null|base|inherit|abstract|default|override|interface|delegate|member|static|inline|mutable|public|private|internal)\b/g, className: "text-blue-400" },
-      { regex: /\b(true|false|null|ignore|failwith|printf|printfn)\b/g, className: "text-purple-400" },
-      { regex: /\b(int|float|string|bool|char|byte|sbyte|int16|uint16|int32|uint32|int64|uint64|decimal|unit|obj|list|array|seq|option)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    
-    // Data Formats
-    json: [
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1(?=\s*:)/g, className: "text-blue-400" }, // Keys
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1(?!\s*:)/g, className: "text-yellow-300" }, // String values
-      { regex: /\b(true|false|null)\b/g, className: "text-purple-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    yaml: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      { regex: /^[\s]*[\w-]+(?=:)/gm, className: "text-blue-400" }, // Keys
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(true|false|null|yes|no|on|off)\b/g, className: "text-purple-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-      { regex: /^[\s]*-/gm, className: "text-cyan-400" }, // List items
-    ],
-    jsx: [
-      // Comments
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      
-      // JSX Elements and Tags (adjusted for HTML-escaped content)
-      { regex: /&lt;\/?[A-Z][a-zA-Z0-9]*(?:\s[^&gt;]*)?\/?&gt;/g, className: "text-cyan-400" }, // React components
-      { regex: /&lt;\/?[a-z][a-zA-Z0-9-]*(?:\s[^&gt;]*)?\/?&gt;/g, className: "text-blue-400" }, // HTML elements
-      { regex: /&lt;&gt;|&lt;\/&gt;/g, className: "text-blue-400" }, // React fragments
-      
-      // JSX Props and attributes
-      { regex: /\s([a-zA-Z-]+)=/g, className: "text-yellow-400" }, // Attribute names
-      { regex: /\{[^}]*\}/g, className: "text-pink-400" }, // JSX expressions
-      
-      // Strings (using helper function)
-      ...createStringPatterns(),
-      
-      // JavaScript keywords
-      { regex: /\b(const|let|var|function|return|if|else|for|while|do|break|continue|switch|case|default|try|catch|finally|throw|new|this|super|class|extends|import|export|from|as|async|await|yield|typeof|instanceof|in|of|delete|void|null|undefined|true|false)\b/g, className: "text-purple-400" },
-      
-      // Numbers (excluding those in CSS class names)
-      { regex: /(?<!class=["'][^"']*)\b\d+\.?\d*\b(?![^"']*["'])/g, className: "text-orange-400" },
-      
-      // Functions
-      { regex: /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g, className: "text-blue-300" },
-    ],
-    tsx: [
-      // Comments
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      
-      // JSX Elements and Tags (adjusted for HTML-escaped content)
-      { regex: /&lt;\/?[A-Z][a-zA-Z0-9]*(?:\s[^&gt;]*)?\/?&gt;/g, className: "text-cyan-400" }, // React components
-      { regex: /&lt;\/?[a-z][a-zA-Z0-9-]*(?:\s[^&gt;]*)?\/?&gt;/g, className: "text-blue-400" }, // HTML elements
-      { regex: /&lt;&gt;|&lt;\/&gt;/g, className: "text-blue-400" }, // React fragments
-      
-      // JSX Props and attributes
-      { regex: /\s([a-zA-Z-]+)=/g, className: "text-yellow-400" }, // Attribute names
-      { regex: /\{[^}]*\}/g, className: "text-pink-400" }, // JSX expressions
-      
-      // Strings (using helper function)
-      ...createStringPatterns(),
-      
-      // TypeScript keywords - split into smaller groups for better performance
-      { regex: /\b(const|let|var|function|return|if|else|for|while|do|break|continue)\b/g, className: "text-purple-400" },
-      { regex: /\b(switch|case|default|try|catch|finally|throw|new|this|super|class|extends)\b/g, className: "text-purple-400" },
-      { regex: /\b(import|export|from|as|async|await|yield|typeof|instanceof|in|of|delete)\b/g, className: "text-purple-400" },
-      { regex: /\b(void|null|undefined|true|false|interface|type|enum|namespace|declare)\b/g, className: "text-purple-400" },
-      { regex: /\b(readonly|keyof|satisfies)\b/g, className: "text-purple-400" },
-      
-      // TypeScript types
-      { regex: /\b(string|number|boolean|object|any|void|never|unknown|bigint|symbol)\b/g, className: "text-cyan-400" },
-      
-      // Numbers (excluding those in CSS class names)
-      { regex: /(?<!class=["'][^"']*)\b\d+\.?\d*\b(?![^"']*["'])/g, className: "text-orange-400" },
-      
-      // Functions
-      { regex: /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g, className: "text-blue-300" },
-    ],
-    
-    // Web Framework Languages
-    vue: [
-      { regex: /<!--[\s\S]*?-->/g, className: "text-green-400" },
-      { regex: /<\?[\s\S]*?\?>/g, className: "text-purple-400" },
-      { regex: /<\/?[\w\s="/.':;#-\/\?]+>/g, className: "text-blue-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-    ],
-    toml: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      { regex: /^\s*\[.*\]$/gm, className: "text-cyan-400" }, // Sections
-      { regex: /^[\s]*[\w-]+(?=\s*=)/gm, className: "text-blue-400" }, // Keys
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(true|false)\b/g, className: "text-purple-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    ini: [
-      { regex: /[;#].*$/gm, className: "text-green-400" },
-      { regex: /^\s*\[.*\]$/gm, className: "text-cyan-400" }, // Sections
-      { regex: /^[\s]*[\w-]+(?=\s*=)/gm, className: "text-blue-400" }, // Keys
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-    ],
-    sql: [
-      { regex: /--.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(SELECT|FROM|WHERE|JOIN|INNER|LEFT|RIGHT|FULL|OUTER|ON|GROUP|BY|ORDER|HAVING|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|DATABASE|INDEX|VIEW|PROCEDURE|FUNCTION|TRIGGER|ALTER|DROP|TRUNCATE|UNION|ALL|DISTINCT|AS|AND|OR|NOT|NULL|IS|IN|BETWEEN|LIKE|EXISTS|CASE|WHEN|THEN|ELSE|END|IF|WHILE|FOR|DECLARE|BEGIN|COMMIT|ROLLBACK|TRANSACTION)\b/gi, className: "text-blue-400" },
-      { regex: /\b(INT|INTEGER|VARCHAR|CHAR|TEXT|DATE|DATETIME|TIMESTAMP|DECIMAL|FLOAT|DOUBLE|BOOLEAN|BOOL|BINARY|BLOB|JSON)\b/gi, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    
-    // Scripting Languages
-    bash: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\$[\w_]+/g, className: "text-purple-400" },
-      { regex: /\$\{[^}]+\}/g, className: "text-purple-400" },
-      { regex: /\b(if|then|else|elif|fi|for|in|do|done|while|until|case|esac|function|return|exit|break|continue|local|export|readonly|declare|unset|shift|eval|exec|source|alias|unalias|history|jobs|bg|fg|nohup|disown|kill|killall|ps|top|grep|sed|awk|cut|sort|uniq|head|tail|wc|find|xargs|tar|gzip|gunzip|zip|unzip|curl|wget|ssh|scp|rsync|chmod|chown|chgrp|ls|cd|pwd|mkdir|rmdir|rm|cp|mv|ln|cat|less|more|echo|printf|read|test)\b/g, className: "text-blue-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    powershell: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      { regex: /<#[\s\S]*?#>/g, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\$[\w_:]+/g, className: "text-purple-400" },
-      { regex: /\b(if|elseif|else|switch|for|foreach|while|do|until|break|continue|return|function|filter|workflow|class|enum|try|catch|finally|throw|param|begin|process|end|pipeline|parallel|sequence|inlinescript)\b/gi, className: "text-blue-400" },
-      { regex: /\b(Get-|Set-|New-|Remove-|Add-|Clear-|Copy-|Move-|Rename-|Test-|Start-|Stop-|Restart-|Enable-|Disable-|Import-|Export-|Select-|Where-|Sort-|Group-|Measure-|Compare-|ForEach-|Out-|Write-|Read-)\w*/gi, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    lua: [
-      { regex: /--.*$/gm, className: "text-green-400" },
-      { regex: /--\[\[[\s\S]*?\]\]/g, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(and|break|do|else|elseif|end|false|for|function|if|in|local|nil|not|or|repeat|return|then|true|until|while)\b/g, className: "text-blue-400" },
-      { regex: /\b(print|type|tostring|tonumber|pairs|ipairs|next|getmetatable|setmetatable|rawget|rawset|rawequal|rawlen|select|unpack|require|module|package|string|table|math|io|os|debug|coroutine)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    
-    // Mobile Languages
-    swift: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(class|struct|enum|protocol|extension|func|var|let|if|else|guard|switch|case|default|for|in|while|repeat|break|continue|return|throw|throws|rethrows|try|catch|defer|import|public|private|internal|fileprivate|open|final|static|lazy|weak|unowned|mutating|nonmutating|override|required|convenience|dynamic|inout|associatedtype|typealias|subscript|willSet|didSet|get|set|init|deinit|self|super|Self|where|as|is)\b/g, className: "text-blue-400" },
-      { regex: /\b(true|false|nil)\b/g, className: "text-purple-400" },
-      { regex: /\b(Int|Double|Float|String|Bool|Character|Array|Dictionary|Set|Optional|Any|AnyObject|Void)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    objectivec: [
-      { regex: /\/\/.*$/gm, className: "text-green-400" },
-      { regex: /\/\*[\s\S]*?\*\//g, className: "text-green-400" },
-      { regex: /@"[^"]*"/g, className: "text-yellow-300" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(@interface|@implementation|@protocol|@property|@synthesize|@dynamic|@class|@selector|@encode|@synchronized|@autoreleasepool|@try|@catch|@finally|@throw|if|else|for|while|do|switch|case|default|break|continue|return|typedef|struct|enum|union|const|static|extern|inline|register|volatile|restrict|auto|signed|unsigned|short|long|int|char|float|double|void)\b/g, className: "text-blue-400" },
-      { regex: /\b(YES|NO|nil|NULL|TRUE|FALSE|self|super)\b/g, className: "text-purple-400" },
-      { regex: /\b(NSString|NSArray|NSDictionary|NSSet|NSNumber|NSData|NSDate|NSURL|NSError|UIView|UIViewController|UILabel|UIButton|UIImageView|UITableView|UICollectionView)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    
-    // Functional Languages
-    haskell: [
-      { regex: /--.*$/gm, className: "text-green-400" },
-      { regex: /\{-[\s\S]*?-\}/g, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(module|import|qualified|as|hiding|where|let|in|case|of|if|then|else|do|class|instance|data|newtype|type|deriving|infixl|infixr|infix)\b/g, className: "text-blue-400" },
-      { regex: /\b(True|False|Nothing|Just|Left|Right|LT|EQ|GT|otherwise)\b/g, className: "text-purple-400" },
-      { regex: /\b(Int|Integer|Float|Double|Char|String|Bool|Maybe|Either|IO|Monad|Functor|Applicative|Foldable|Traversable)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    elixir: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(def|defp|defmodule|defprotocol|defimpl|defstruct|defexception|defmacro|defmacrop|defguard|defguardp|if|unless|cond|case|with|for|try|rescue|catch|after|raise|throw|receive|send|spawn|spawn_link|spawn_monitor|import|alias|require|use|quote|unquote|when|and|or|not|in|fn|end|do|else|elsif)\b/g, className: "text-blue-400" },
-      { regex: /\b(true|false|nil|self)\b/g, className: "text-purple-400" },
-      { regex: /:[\w_]+/g, className: "text-cyan-400" }, // Atoms
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    clojure: [
-      { regex: /;.*$/gm, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(def|defn|defn-|defmacro|defmulti|defmethod|defprotocol|defrecord|defstruct|deftype|let|if|when|when-not|cond|condp|case|and|or|not|do|loop|recur|fn|quote|syntax-quote|unquote|unquote-splicing|var|throw|try|catch|finally|monitor-enter|monitor-exit|new|set!|ns|in-ns|import|use|require|refer|load|eval|apply|partial|comp|complement|constantly|identity|fnil|memoize|trampoline|repeatedly|iterate|cycle|range|take|drop|filter|map|reduce|into|conj|assoc|dissoc|get|get-in|assoc-in|update-in|select-keys|merge|merge-with|zipmap|group-by|partition|partition-by|split-at|split-with|frequencies|distinct|sort|sort-by|reverse|shuffle|first|second|last|rest|next|butlast|take-last|drop-last|take-while|drop-while|some|every?|not-any?|not-every?|empty?|seq|vec|list|set|hash-map|hash-set|vector|list*|lazy-seq|repeatedly|iterate|cycle|range|repeat|replicate|take|drop|take-nth|take-while|drop-while|filter|remove|keep|keep-indexed|map|map-indexed|mapcat|for|doseq|dotimes|while|when|when-not|when-let|when-first|if-let|if-not|cond|condp|case|and|or|not|some->|some->>|as->|cond->|cond->>|doto|->|->>) /g, className: "text-blue-400" },
-      { regex: /\b(true|false|nil)\b/g, className: "text-purple-400" },
-      { regex: /:[a-zA-Z][a-zA-Z0-9*+!_?-]*/g, className: "text-cyan-400" }, // Keywords
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    
-    // Other Languages
-    r: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(function|if|else|for|in|while|repeat|next|break|return|switch|ifelse|stop|warning|try|tryCatch|library|require|source|attach|detach|with|within|data|list|vector|matrix|array|factor|data.frame|NULL|NA|TRUE|FALSE|Inf|NaN)\b/g, className: "text-blue-400" },
-      { regex: /\b(c|length|dim|names|colnames|rownames|str|summary|head|tail|class|typeof|is|as|print|cat|paste|sprintf|substr|nchar|grep|gsub|sub|strsplit|toupper|tolower|mean|median|sd|var|min|max|sum|prod|range|quantile|sort|order|rank|unique|duplicated|which|match|%in%|apply|lapply|sapply|mapply|tapply|aggregate|merge|rbind|cbind|t|solve|eigen|svd|qr|chol|det|diag|crossprod|tcrossprod)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    julia: [
-      { regex: /#.*$/gm, className: "text-green-400" },
-      { regex: /#=[\s\S]*?=#/g, className: "text-green-400" },
-      { regex: /(['"])(?:(?!\1)[^\\]|\\.)*\1/g, className: "text-yellow-300" },
-      { regex: /\b(function|end|if|elseif|else|for|in|while|do|break|continue|return|try|catch|finally|throw|rethrow|let|local|global|const|struct|mutable|abstract|primitive|type|where|module|using|import|export|macro|quote|baremodule)\b/g, className: "text-blue-400" },
-      { regex: /\b(true|false|nothing|missing|undef|Inf|NaN)\b/g, className: "text-purple-400" },
-      { regex: /\b(Int|Int8|Int16|Int32|Int64|UInt|UInt8|UInt16|UInt32|UInt64|Float16|Float32|Float64|Complex|ComplexF32|ComplexF64|Bool|Char|String|Symbol|Array|Vector|Matrix|Dict|Set|Tuple|NamedTuple|Union|Any|Nothing|Missing)\b/g, className: "text-cyan-400" },
-      { regex: /\b\d+\.?\d*\b/g, className: "text-orange-400" },
-    ],
-    
-    markdown: [
-      { regex: /^#\s.+$/gm, className: "text-blue-400 font-bold text-xl leading-5" }, // h1 - blue
-      { regex: /^##\s.+$/gm, className: "text-green-400 font-bold text-xl leading-5" }, // h2 - green
-      { regex: /^###\s.+$/gm, className: "text-yellow-400 font-bold text-xl leading-5" }, // h3 - yellow
-      { regex: /^####\s.+$/gm, className: "text-purple-400 font-bold text-xl leading-5" }, // h4 - purple
-      { regex: /^#####\s.+$/gm, className: "text-pink-400 font-bold text-xl leading-5" }, // h5 - pink
-      { regex: /^######\s.+$/gm, className: "text-cyan-400 font-bold text-xl leading-5" }, // h6 - cyan
-      { regex: /\*\*(.+?)\*\*/g, className: "text-yellow-700 font-bold" },
-      { regex: /\*(.+?)\*/g, className: "text-gray-300 italic" },
-      { regex: /`(.+?)`/g, className: "text-green-300 bg-gray-800 px-1 rounded" },
-      { regex: /\[(.+?)\]\(.+?\)/g, className: "text-blue-300 underline" },
-      { regex: /^.+$/gm, className: "text-white" }, // Default text color for all lines
-    ],
-  }
-
-  const languagePatterns = patterns[language] || []
-
-  // Apply patterns in order, being careful not to interfere with already highlighted text
-  languagePatterns.forEach(({ regex, className }) => {
-    highlighted = highlighted.replace(regex, (match, ...groups) => {
-      // Don't highlight text that's already inside a span tag or contains HTML entities
-      const beforeMatch = highlighted.substring(0, highlighted.indexOf(match))
-      const afterMatch = highlighted.substring(highlighted.indexOf(match) + match.length)
-      
-      // Check if this match is already inside a span tag
-      const lastOpenSpan = beforeMatch.lastIndexOf('<span')
-      const lastCloseSpan = beforeMatch.lastIndexOf('</span>')
-      const isInsideSpan = lastOpenSpan > lastCloseSpan
-      
-      // Check if this match contains or is part of HTML attributes
-      const containsClassAttribute = match.includes('class=') || match.includes('text-') || match.includes('-400') || match.includes('-300')
-      
-      if (isInsideSpan || containsClassAttribute) {
-        return match // Don't modify if already highlighted or contains CSS classes
-      }
-      
-      return `<span class="${className}">${match}</span>`
-    })
-  })
-
-  return highlighted
-}
-
-export function EditorContent({ file, onContentChange, files, onCreateFile, onLoadFileContent, editorSettings, onSaveFile, onSaveAllFiles }: EditorContentProps) {
-  const [content, setContent] = useState(file?.content || "")
-  const [lastSavedContent, setLastSavedContent] = useState(file?.content || "")
-  const [selectedText, setSelectedText] = useState("")
-  const [selectionStart, setSelectionStart] = useState(0)
-  const [selectionEnd, setSelectionEnd] = useState(0)
-  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved")
-  const [scrollTop, setScrollTop] = useState(0)
-  const [viewMode, setViewMode] = useState<"edit" | "preview">("edit")
-  const [currentFilePath, setCurrentFilePath] = useState(file?.path || "")
-  
-  // Undo/Redo history state
-  const [history, setHistory] = useState<string[]>([file?.content || ""])
-  const [historyIndex, setHistoryIndex] = useState(0)
-  const [isUndoRedo, setIsUndoRedo] = useState(false)
-  
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const overlayRef = useRef<HTMLDivElement>(null)
-
-  // Debug environment on mount
-  useEffect(() => {
-    console.log("🔍 ENVIRONMENT DEBUG:");
-    console.log("- isElectron detected:", typeof (window as any).electronAPI !== 'undefined');
-    console.log("- electronAPI object:", (window as any).electronAPI);
-    console.log("- saveFileAuto function:", (window as any).electronAPI?.saveFileAuto);
-    console.log("- onSaveFile prop:", !!onSaveFile);
-  }, [])
-
-  // Default settings
-  const settings = editorSettings || {
-    lineNumbers: true,
-    syntaxHighlighting: true,
-    wordWrap: false,
-    autoResponses: true,
-    codeSuggestions: true,
-    autosave: true,
-  }
-
-  const fileName = file?.name ?? ""
-  const filePath = file?.path ?? ""
-
-  // Memoized values for performance
-  const language = useMemo(() => {
-    return fileName ? getLanguageFromExtension(fileName) : "text"
-  }, [fileName])
-
-  const isMarkdown = useMemo(() => {
-    if (!fileName) return false
-    const extension = fileName.split(".").pop()?.toLowerCase()
-    return extension === "md" || extension === "markdown"
-  }, [fileName])
-
-  useEffect(() => {
-    setViewMode("edit")
-  }, [filePath])
-
-  const markdownComponents = useMemo<Components>(() => ({
-    h1: (props) => <h1 {...props} />,
-    h2: (props) => <h2 {...props} />,
-    h3: (props) => <h3 {...props} />,
-    p: (props) => <p {...props} />,
-    ul: (props) => <ul {...props} />,
-    ol: (props) => <ol {...props} />,
-    li: (props) => <li {...props} />,
-    blockquote: (props) => <blockquote {...props} />,
-    code: ({ inline, className, children, ...props }: React.ComponentProps<'code'> & { inline?: boolean }) => {
-    if (inline) {
-      return <code className="inline-block" {...props}>{children}</code>;
-    }
-
-      return (
-        <pre>
-          <code {...props}>
-            {children}
-          </code>
-        </pre>
-      );
-    },
-    table: (props) => (
-      <div className="overflow-x-auto">
-        <table {...props} />
-      </div>
-    ),
-    thead: (props) => <thead {...props} />,
-    th: (props) => <th {...props} />,
-    td: (props) => <td {...props} />,
-    a: (props) => (
-      <a target="_blank" rel="noopener noreferrer" {...props} />
-    ),
-    img: ({ alt, ...props }) => (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img alt={alt ?? ""} {...props} />
-    ),
-    hr: (props) => <hr {...props} />,
-  }), [])
-
-  const lines = useMemo(() => {
-    return content.split('\n')
-  }, [content])
-
-  const lineCount = lines.length
-
-  const showEditor = !(isMarkdown && viewMode === "preview")
-  const showLineNumbers = settings.lineNumbers && showEditor
-  const editorTextSizeClass = isMarkdown ? "text-base" : "text-sm"
-
-  // Memoized highlighted content
-  const highlightedContent = useMemo(() => {
-    if (!settings.syntaxHighlighting || !content) return content
-    return highlightSyntax(content, language)
-  }, [content, language, settings.syntaxHighlighting])
-
-  // Sync scroll between textarea and overlay
-  const handleScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>) => {
-    const scrollTop = e.currentTarget.scrollTop
-    setScrollTop(scrollTop)
+  // --- Funciones auxiliares ---
+  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    const scrollTop = e.currentTarget.scrollTop;
+    const scrollLeft = e.currentTarget.scrollLeft;
+    // Sincronizar scroll con overlays
     if (overlayRef.current) {
-      overlayRef.current.scrollTop = scrollTop
+      overlayRef.current.scrollTop = scrollTop;
+      overlayRef.current.scrollLeft = scrollLeft;
     }
-  }, [])
+  };
 
-  // Undo function
-  const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1
-      const previousContent = history[newIndex]
-      setIsUndoRedo(true)
-      setContent(previousContent)
-      setHistoryIndex(newIndex)
-      onContentChange(previousContent)
-      
-      // Check if undo content matches last saved content
-      if (previousContent !== lastSavedContent) {
-        setSaveStatus("unsaved")
-      } else {
-        setSaveStatus("saved")
+  const useUndoRedo = (content: string, setContent: (c: string) => void, history: string[], setHistory: (h: string[]) => void, historyIndex: number, setHistoryIndex: (i: number) => void, setIsUndoRedo: (b: boolean) => void, onContentChange: (c: string) => void, lastSavedContent: string, setSaveStatus: (s: 'saved'|'unsaved'|'saving') => void) => {
+    const undo = useCallback(() => {
+      if (historyIndex > 0) {
+        const newIndex = historyIndex - 1;
+        setIsUndoRedo(true);
+        setContent(history[newIndex]);
+        setHistoryIndex(newIndex);
+        onContentChange(history[newIndex]);
+        if (history[newIndex] !== lastSavedContent) {
+          setSaveStatus("unsaved");
+        } else {
+          setSaveStatus("saved");
+        }
       }
-    }
-  }, [history, historyIndex, onContentChange, lastSavedContent])
-
-  // Redo function
-  const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1
-      const nextContent = history[newIndex]
-      setIsUndoRedo(true)
-      setContent(nextContent)
-      setHistoryIndex(newIndex)
-      onContentChange(nextContent)
-      
-      // Check if redo content matches last saved content
-      if (nextContent !== lastSavedContent) {
-        setSaveStatus("unsaved")
-      } else {
-        setSaveStatus("saved")
+    }, [history, historyIndex, onContentChange, lastSavedContent]);
+    const redo = useCallback(() => {
+      if (historyIndex < history.length - 1) {
+        const newIndex = historyIndex + 1;
+        setIsUndoRedo(true);
+        setContent(history[newIndex]);
+        setHistoryIndex(newIndex);
+        onContentChange(history[newIndex]);
+        if (history[newIndex] !== lastSavedContent) {
+          setSaveStatus("unsaved");
+        } else {
+          setSaveStatus("saved");
+        }
       }
-    }
-  }, [history, historyIndex, onContentChange, lastSavedContent])
+    }, [history, historyIndex, onContentChange, lastSavedContent]);
+    return { undo, redo };
+  };
 
-  // Add to history function
+  // Sincronizar scroll del overlay cuando cambia el contenido
+  useEffect(() => {
+    if (textareaRef.current && overlayRef.current) {
+      overlayRef.current.scrollTop = textareaRef.current.scrollTop;
+      overlayRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+  }, [content]);
+
+  // Sincronizar scroll inicial
+  useEffect(() => {
+    if (textareaRef.current && overlayRef.current) {
+      overlayRef.current.scrollTop = textareaRef.current.scrollTop;
+      overlayRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+  }, []);
+
+  // --- Restaurar funciones y variables ---
+  // Undo/Redo hooks
+  const { undo, redo } = useUndoRedo(content, setContent, history, setHistory, historyIndex, setHistoryIndex, setIsUndoRedo, onContentChange, lastSavedContent, setSaveStatus);
+
+  // Lenguaje y líneas
+  const language = useMemo(() => getLanguageFromExtension(file?.name), [file?.name]);
+  const lineCount = useMemo(() => getLineCount(content), [content]);
+  const lines = useMemo(() => content.split('\n'), [content]);
+
+  // Highlighted content - línea por línea para mejor sincronización
+  const highlightedLines = useHighlightLines(lines, language, settings);
+
+  // Estado para controlar análisis de linting
+  const [isLinting, setIsLinting] = useState(false);
+
+  // Limpiar errores de sintaxis cuando cambia el lenguaje
+  useEffect(() => {
+    setSyntaxErrors([]);
+  }, [language]);
+
+  // Función para analizar código con debouncing
+  const analyzeCode = useCallback(async (code: string, lang: string, fileName?: string) => {
+    if (isLinting) return; // Evitar múltiples análisis simultáneos
+
+    setIsLinting(true);
+    try {
+      let endpoint = '';
+      let body: any = { code };
+
+      if (lang === 'python') {
+        endpoint = '/api/pyright';
+      } else if (lang === 'javascript' || lang === 'typescript') {
+        endpoint = '/api/eslint';
+        body.language = lang;
+      } else if (lang === 'cpp' || lang === 'c') {
+        endpoint = '/api/clangd';
+        body.fileName = fileName || 'main.cpp';
+      } else {
+        setSyntaxErrors([]);
+        return;
+      }
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      setSyntaxErrors(result.errors || []);
+    } catch (err) {
+      console.error('Linting error:', err);
+      // No mostrar errores de linting como errores de sintaxis para evitar confusión
+      setSyntaxErrors([]);
+    } finally {
+      setIsLinting(false);
+    }
+  }, [isLinting]);
+
+  // Analizar código con debouncing
+  useEffect(() => {
+    if (!content.trim()) {
+      setSyntaxErrors([]);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      analyzeCode(content, language, file?.name);
+    }, 500); // 500ms de delay
+
+    return () => clearTimeout(timeoutId);
+  }, [content, language, file?.name, analyzeCode]);
+
+  // --- Restaurar addToHistory antes de su uso ---
   const addToHistory = useCallback((newContent: string) => {
     if (isUndoRedo) {
-      setIsUndoRedo(false)
-      return
+      setIsUndoRedo(false);
+      return;
     }
-    
-    // Don't add to history if content is the same
-    if (history[historyIndex] === newContent) return
-    
-    // Remove any future history if we're not at the end
-    const newHistory = history.slice(0, historyIndex + 1)
-    newHistory.push(newContent)
-    
-    // Limit history to 100 entries
+    if (history[historyIndex] === newContent) return;
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newContent);
     if (newHistory.length > 100) {
-      newHistory.shift()
+      newHistory.shift();
     } else {
-      setHistoryIndex(historyIndex + 1)
+      setHistoryIndex(historyIndex + 1);
     }
-    
-    setHistory(newHistory)
-  }, [history, historyIndex, isUndoRedo])
+    setHistory(newHistory);
+  }, [history, historyIndex, isUndoRedo]);
 
   // Optimized content change handler with debouncing
   const handleContentChange = useCallback((newContent: string) => {
     setContent(newContent)
     onContentChange(newContent)
-    
     // Only mark as unsaved if content actually differs from last saved version
     if (newContent !== lastSavedContent) {
       setSaveStatus("unsaved")
     } else {
       setSaveStatus("saved")
     }
-    
     // Add to history with a small delay to avoid too many entries
     setTimeout(() => addToHistory(newContent), 500)
   }, [onContentChange, addToHistory, lastSavedContent])
@@ -782,7 +428,7 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only log save shortcuts to avoid spam
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
-        console.log("🎹 Key pressed:", { key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
+        console.log("🎹 Key pressed:", { key: e.key, ctrlKey: e.ctrlKey, metaKey: e.shiftKey });
       }
 
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
@@ -1042,7 +688,7 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
                   transition: 'none'
                 }}
               >
-                {lines.map((_, i) => (
+                {lines.map((_: string, i: number) => (
                   <div key={i + 1} className={`text-left h-6 flex items-center justify-start pl-1 ${isMarkdown ? 'text-base' : 'text-sm'}`}>
                     {i + 1}
                   </div>
@@ -1051,11 +697,11 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
             </div>
           )}
 
-          {/* Syntax Highlighting Overlay */}
+          {/* Overlay con errores de sintaxis debajo de cada línea */}
           {showEditor && settings.syntaxHighlighting && (
             <div
               ref={overlayRef}
-              className={`absolute inset-0 ${showLineNumbers ? 'pl-[68px]' : 'p-4'} pr-4 pt-4 pb-4 leading-6 font-mono pointer-events-none overflow-auto scrollbar-hide text-white ${editorTextSizeClass} ${
+              className={`absolute inset-0 ${showLineNumbers ? 'pl-[68px]' : 'pl-4'} pr-4 pt-4 pb-4 leading-6 font-mono pointer-events-none overflow-hidden text-white ${editorTextSizeClass} ${
                 settings.wordWrap ? "whitespace-pre-wrap" : "whitespace-pre"
               }`}
               style={{
@@ -1068,13 +714,31 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
                 WebkitUserSelect: 'none',
                 MozUserSelect: 'none',
                 msUserSelect: 'none',
+                tabSize: 2,
+                overflowWrap: settings.wordWrap ? "break-word" : "normal",
+                wordBreak: settings.wordWrap ? "break-word" : "normal",
+                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Monaco, Inconsolata, "Roboto Mono", "Source Code Pro", monospace',
+                fontSize: '14px',
+                lineHeight: '24px',
               }}
-              dangerouslySetInnerHTML={{
-                __html: highlightedContent,
-              }}
-            />
+            >
+              {lines.map((line: string, i: number) => (
+                <div key={i} style={{ position: 'relative', lineHeight: '24px', minHeight: '24px' }}>
+                  {settings.syntaxHighlighting ? (
+                    <span dangerouslySetInnerHTML={{ __html: highlightedLines[i] || line }} />
+                  ) : (
+                    <span>{line}</span>
+                  )}
+                  {syntaxErrors.filter((e: SyntaxError) => e.line === i + 1).map((err: SyntaxError, idx: number) => (
+                    <div key={idx} className="text-xs text-red-400 bg-[#2d0a0a] rounded px-2 py-1 mt-1 mb-1 w-fit">
+                      {err.message}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           )}
-          
+
           {/* Main Textarea */}
           {showEditor && (
             <textarea
@@ -1092,6 +756,9 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
                 overflowWrap: settings.wordWrap ? "break-word" : "normal",
                 wordBreak: settings.wordWrap ? "break-word" : "normal",
                 tabSize: 2,
+                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Monaco, Inconsolata, "Roboto Mono", "Source Code Pro", monospace',
+                fontSize: '14px',
+                lineHeight: '24px',
               }}
               spellCheck={false}
               autoComplete="off"
@@ -1104,7 +771,7 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
           {isMarkdown && viewMode === "preview" && (
             <div className="absolute inset-0 overflow-auto p-6 bg-[#1e1e1e] markdown-preview">
               <div className="max-w-3xl mx-auto">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{}}>
                   {content}
                 </ReactMarkdown>
               </div>
@@ -1115,3 +782,5 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
     </div>
   )
 }
+
+export default EditorContent;

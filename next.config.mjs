@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
+  // output: 'export', // Deshabilitado para permitir API routes
   trailingSlash: true,
   // Configuración para asegurar que los archivos estáticos se generen correctamente
   // No usar assetPrefix para evitar problemas con next/font

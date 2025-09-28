@@ -3,7 +3,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react"
 import { FileTree, DEFAULT_EDITOR_SETTINGS } from "./file-tree"
 import type { EditorSettings } from "./file-tree"
-import { EditorContent } from "./editor-content"
+import EditorContent from "./editor-content"
 import { AICommandBar } from "./ai-command-bar"
 import { useElectron } from "../hooks/use-electron"
 import { chatService } from "../lib/chat-service"
@@ -592,10 +592,8 @@ export function FlutterEditor() {
           <EditorContent
             file={files[activeFile]}
             onContentChange={(content) => updateFileContent(activeFile, content)}
-            files={files}
-            onCreateFile={createFile}
             onLoadFileContent={loadFileContent}
-            editorSettings={editorSettings}
+            settings={editorSettings}
             onSaveFile={saveFile}
             onSaveAllFiles={saveAllFiles}
           />
