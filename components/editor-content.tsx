@@ -1,6 +1,10 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { Book, BookOpen } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import type { Components } from "react-markdown"
+import remarkGfm from "remark-gfm"
 import type { FileItem } from "./flutter-editor"
 import { fileDiffService } from "../lib/file-diff"
 
@@ -524,6 +528,7 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
   const [selectionEnd, setSelectionEnd] = useState(0)
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved")
   const [scrollTop, setScrollTop] = useState(0)
+  const [viewMode, setViewMode] = useState<"edit" | "preview">("edit")
   
   // Undo/Redo history state
   const [history, setHistory] = useState<string[]>([file?.content || ""])
@@ -542,16 +547,73 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
     codeSuggestions: true,
   }
 
+  const fileName = file?.name ?? ""
+  const filePath = file?.path ?? ""
+
   // Memoized values for performance
   const language = useMemo(() => {
-    return file ? getLanguageFromExtension(file.name) : "text"
-  }, [file?.name])
+    return fileName ? getLanguageFromExtension(fileName) : "text"
+  }, [fileName])
+
+  const isMarkdown = useMemo(() => {
+    if (!fileName) return false
+    const extension = fileName.split(".").pop()?.toLowerCase()
+    return extension === "md" || extension === "markdown"
+  }, [fileName])
+
+  useEffect(() => {
+    setViewMode("edit")
+  }, [filePath])
+
+  const markdownComponents = useMemo<Components>(() => ({
+    h1: (props) => <h1 {...props} />,
+    h2: (props) => <h2 {...props} />,
+    h3: (props) => <h3 {...props} />,
+    p: (props) => <p {...props} />,
+    ul: (props) => <ul {...props} />,
+    ol: (props) => <ol {...props} />,
+    li: (props) => <li {...props} />,
+    blockquote: (props) => <blockquote {...props} />,
+    code: ({ inline, className, children, ...props }: React.ComponentProps<'code'> & { inline?: boolean }) => {
+    if (inline) {
+      return <code className="inline-block" {...props}>{children}</code>;
+    }
+
+      return (
+        <pre>
+          <code {...props}>
+            {children}
+          </code>
+        </pre>
+      );
+    },
+    table: (props) => (
+      <div className="overflow-x-auto">
+        <table {...props} />
+      </div>
+    ),
+    thead: (props) => <thead {...props} />,
+    th: (props) => <th {...props} />,
+    td: (props) => <td {...props} />,
+    a: (props) => (
+      <a target="_blank" rel="noopener noreferrer" {...props} />
+    ),
+    img: ({ alt, ...props }) => (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img alt={alt ?? ""} {...props} />
+    ),
+    hr: (props) => <hr {...props} />,
+  }), [])
 
   const lines = useMemo(() => {
     return content.split('\n')
   }, [content])
 
   const lineCount = lines.length
+
+  const showEditor = !(isMarkdown && viewMode === "preview")
+  const showLineNumbers = settings.lineNumbers && showEditor
+  const editorTextSizeClass = isMarkdown ? "text-base" : "text-sm"
 
   // Memoized highlighted content
   const highlightedContent = useMemo(() => {
@@ -801,6 +863,16 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
         <div className="flex items-center gap-4 text-xs text-gray-400">
           <span>Líneas: {lineCount}</span>
           <span>Caracteres: {content.length}</span>
+          {isMarkdown && (
+            <button
+              onClick={() => setViewMode(viewMode === "edit" ? "preview" : "edit")}
+              className={`flex items-center gap-1 rounded border border-transparent px-2 py-1 text-xs font-medium text-gray-200 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0e639c] focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d30] disabled:opacity-50 ${viewMode === "preview" ? "bg-[#0e639c] hover:bg-[#1177bb]" : "bg-[#3a3d41] hover:bg-[#45494e]"}`}
+              title={viewMode === "edit" ? "Ver previsualización" : "Volver a edición"}
+            >
+              {viewMode === "edit" ? <Book className="h-4 w-4" /> : <BookOpen className="h-4 w-4" />}
+              <span>{viewMode === "edit" ? "Preview" : "Editar"}</span>
+            </button>
+          )}
           {saveStatus === "saving" && <span className="text-blue-400">Guardando...</span>}
           {saveStatus === "saved" && <span className="text-green-400">Guardado</span>}
           {saveStatus === "unsaved" && <span className="text-yellow-400">Sin guardar (Ctrl+S)</span>}
@@ -810,7 +882,7 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
       {/* Editor */}
       <div className="flex flex-1 overflow-hidden">
         {/* Line Numbers */}
-        {settings.lineNumbers && (
+  {showLineNumbers && (
           <div className="bg-[#1e1e1e] text-[#858585] text-sm leading-6 px-3 py-4 select-none min-w-[60px] border-r border-[#3e3e3e] overflow-hidden">
             <div 
               className="overflow-hidden"
@@ -831,10 +903,10 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
         {/* Content */}
         <div className="flex-1 relative overflow-hidden">
           {/* Syntax Highlighting Overlay */}
-          {settings.syntaxHighlighting && (
+          {showEditor && settings.syntaxHighlighting && (
             <div
               ref={overlayRef}
-              className={`absolute inset-0 p-4 text-sm leading-6 font-mono pointer-events-none overflow-auto scrollbar-hide text-white ${
+              className={`absolute inset-0 p-4 leading-6 font-mono pointer-events-none overflow-auto scrollbar-hide text-white ${editorTextSizeClass} ${
                 settings.wordWrap ? "whitespace-pre-wrap" : "whitespace-pre"
               }`}
               style={{
@@ -855,28 +927,40 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
           )}
           
           {/* Main Textarea */}
-          <textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(e) => handleContentChange(e.target.value)}
-            onSelect={handleTextSelection}
-            onMouseUp={handleTextSelection}
-            onKeyUp={handleTextSelection}
-            onScroll={handleScroll}
-            className={`w-full h-full bg-transparent ${settings.syntaxHighlighting ? 'text-transparent' : 'text-white'} caret-white text-sm leading-6 p-4 resize-none outline-none font-mono relative z-10 scrollbar-thin scrollbar-track-[#2d2d30] scrollbar-thumb-[#555]`}
-            style={{
-              minHeight: "100%",
-              whiteSpace: settings.wordWrap ? "pre-wrap" : "pre",
-              overflowWrap: settings.wordWrap ? "break-word" : "normal",
-              wordBreak: settings.wordWrap ? "break-word" : "normal",
-              tabSize: 2,
-            }}
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            placeholder={content ? "" : "Comienza a escribir tu código aquí..."}
-          />
+          {showEditor && (
+            <textarea
+              ref={textareaRef}
+              value={content}
+              onChange={(e) => handleContentChange(e.target.value)}
+              onSelect={handleTextSelection}
+              onMouseUp={handleTextSelection}
+              onKeyUp={handleTextSelection}
+              onScroll={handleScroll}
+              className={`w-full h-full bg-transparent ${settings.syntaxHighlighting ? 'text-transparent' : 'text-white'} caret-white ${editorTextSizeClass} leading-6 p-4 resize-none outline-none font-mono relative z-10 scrollbar-thin scrollbar-track-[#2d2d30] scrollbar-thumb-[#555]`}
+              style={{
+                minHeight: "100%",
+                whiteSpace: settings.wordWrap ? "pre-wrap" : "pre",
+                overflowWrap: settings.wordWrap ? "break-word" : "normal",
+                wordBreak: settings.wordWrap ? "break-word" : "normal",
+                tabSize: 2,
+              }}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              placeholder={content ? "" : "Comienza a escribir tu código aquí..."}
+            />
+          )}
+
+          {isMarkdown && viewMode === "preview" && (
+            <div className="absolute inset-0 overflow-auto p-6 bg-[#1e1e1e] markdown-preview">
+              <div className="max-w-3xl mx-auto">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {content}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

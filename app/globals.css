@@ -344,3 +344,160 @@ a,
   -webkit-mask: none;
   mask: none;
 }
+
+/* Estilos para elementos inline de markdown */
+.inline-highlight {
+  text-decoration: underline;
+  color: #dc2626; /* Rojo Tailwind */
+  padding: 2px 4px;
+}
+
+.inline-highlight.code {
+  background-color: rgba(220, 28, 38, 0.1);
+  font-family: 'Geist Mono', monospace;
+  font-size: 0.9em;
+}
+
+.markdown-paragraph {
+  margin: 8px 0;
+  line-height: 1.5;
+}
+
+/* Para más variantes */
+.inline-highlight.warning {
+  background-color: #fef3c7;
+  color: #d97706;
+}
+
+.inline-highlight.info {
+  background-color: #dbeafe;
+  color: #2563eb;
+}
+
+/* Markdown Preview Styles */
+.markdown-preview h1 {
+  font-size: 2.25rem;
+  font-weight: 700;
+  color: oklch(0.9 0 0);
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid oklch(0.3 0 0);
+  padding-bottom: 0.5rem;
+}
+
+.markdown-preview h2 {
+  font-size: 1.875rem;
+  font-weight: 600;
+  color: oklch(0.85 0 0);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.markdown-preview h3 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: oklch(0.8 0 0);
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-preview p {
+  margin: 0;
+  color: oklch(0.75 0 0);
+  display: inline;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+  color: oklch(0.75 0 0);
+}
+
+.markdown-preview li {
+  margin-bottom: 0.5rem;
+}
+
+.markdown-preview blockquote {
+  border-left: 4px solid #8ab4f8;
+  padding-left: 1rem;
+  font-style: italic;
+  color: oklch(0.65 0 0);
+  margin: 1rem 0;
+}
+
+.markdown-preview pre {
+  background-color: #202124;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0;
+  overflow-x: auto;
+  margin: 0;
+  width: fit-content;
+  max-width: 100%;
+  display: inline;
+  color:aqua;
+}
+
+.markdown-preview code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: oklch(0.85 0 0);
+}
+
+/* This will make inline code render as normal text */
+.markdown-preview code:not(pre > code) {
+  background-color: transparent;
+  padding: 0;
+  color: #dc2626;
+  text-decoration: underline;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid oklch(0.3 0 0);
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+
+.markdown-preview thead {
+  background-color: oklch(0.25 0 0);
+}
+
+.markdown-preview th {
+  border: 1px solid oklch(0.3 0 0);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  color: oklch(0.9 0 0);
+}
+
+.markdown-preview td {
+  border: 1px solid oklch(0.3 0 0);
+  padding: 0.5rem 0.75rem;
+  color: oklch(0.8 0 0);
+}
+
+.markdown-preview a {
+  color: #8ab4f8;
+  text-decoration: none;
+}
+
+.markdown-preview a:hover {
+  text-decoration: underline;
+}
+
+.markdown-preview img {
+  max-width: 100%;
+  border-radius: 0.375rem;
+  border: 1px solid oklch(0.3 0 0);
+  margin: 1rem 0;
+}
+
+.markdown-preview hr {
+  border-color: oklch(0.3 0 0);
+  margin: 2rem 0;
+}
