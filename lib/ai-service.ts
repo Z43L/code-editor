@@ -257,7 +257,7 @@ class AIService {
               content: prompt
             }
           ],
-          max_tokens: request.max_tokens || 1000,
+          max_tokens: 80000,
           temperature: 0.7
         })
       });

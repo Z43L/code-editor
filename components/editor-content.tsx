@@ -484,9 +484,14 @@ const highlightSyntax = (code: string, language: string): string => {
     ],
     
     markdown: [
-      { regex: /^#{1,6}\s.+$/gm, className: "text-white font-bold text-xl" },
-      { regex: /\*\*(.+?)\*\*/g, className: "text-white font-bold" },
-      { regex: /\*(.+?)\*/g, className: "text-white italic" },
+      { regex: /^#\s.+$/gm, className: "text-blue-400 font-bold text-xl leading-5" }, // h1 - blue
+      { regex: /^##\s.+$/gm, className: "text-green-400 font-bold text-xl leading-5" }, // h2 - green
+      { regex: /^###\s.+$/gm, className: "text-yellow-400 font-bold text-xl leading-5" }, // h3 - yellow
+      { regex: /^####\s.+$/gm, className: "text-purple-400 font-bold text-xl leading-5" }, // h4 - purple
+      { regex: /^#####\s.+$/gm, className: "text-pink-400 font-bold text-xl leading-5" }, // h5 - pink
+      { regex: /^######\s.+$/gm, className: "text-cyan-400 font-bold text-xl leading-5" }, // h6 - cyan
+      { regex: /\*\*(.+?)\*\*/g, className: "text-yellow-700 font-bold" },
+      { regex: /\*(.+?)\*/g, className: "text-gray-300 italic" },
       { regex: /`(.+?)`/g, className: "text-green-300 bg-gray-800 px-1 rounded" },
       { regex: /\[(.+?)\]\(.+?\)/g, className: "text-blue-300 underline" },
       { regex: /^.+$/gm, className: "text-white" }, // Default text color for all lines
@@ -530,9 +535,6 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved")
   const [scrollTop, setScrollTop] = useState(0)
   const [viewMode, setViewMode] = useState<"edit" | "preview">("edit")
-  const [suggestions, setSuggestions] = useState<Array<{ text: string; type: 'std' | 'ai' }>>([])
-  const [suggestionIndex, setSuggestionIndex] = useState(0)
-  const [showSuggestions, setShowSuggestions] = useState(false)
   const [currentFilePath, setCurrentFilePath] = useState(file?.path || "")
   
   // Undo/Redo history state
@@ -560,8 +562,6 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
     autoResponses: true,
     codeSuggestions: true,
     autosave: true,
-    autocomplete: true,
-    aiAutocomplete: false,
   }
 
   const fileName = file?.name ?? ""
@@ -743,110 +743,6 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
     }
   }, [file?.path, currentFilePath]) // Only watch for path changes
 
-  // Autocomplete logic
-  useEffect(() => {
-    const getSuggestions = async () => {
-      if ((!settings.autocomplete && !settings.aiAutocomplete) || !textareaRef.current) {
-        setShowSuggestions(false);
-        return;
-      }
-
-      const cursorPosition = textareaRef.current.selectionStart;
-      const textBeforeCursor = content.substring(0, cursorPosition);
-      const wordMatch = textBeforeCursor.match(/(\S+)$/);
-      const currentWord = wordMatch ? wordMatch[1] : '';
-
-      if (currentWord.length < 2) {
-        setShowSuggestions(false);
-        return;
-      }
-
-      let allSuggestions: Array<{ text: string; type: 'std' | 'ai' }> = [];
-
-      // AI suggestions
-      if (settings.aiAutocomplete) {
-        const codeBeforeCursor = content.substring(0, cursorPosition);
-        const codeAfterCursor = content.substring(cursorPosition);
-
-        const request: EditorChatRequest = {
-          message: `You are a code completion assistant. Given the code context, provide a single, short completion for the current word/line. Return only the code completion itself, no explanations or markdown.
-### Code before cursor:
-${codeBeforeCursor}
-### Code after cursor:
-${codeAfterCursor}
-`,
-          active_file: file?.path,
-          file_content: content,
-          has_selection: false,
-          intent: 'code_completion',
-          max_tokens: 20,
-        };
-
-        try {
-          const response = await aiService.sendEditorChat(request);
-          let suggestionText = response.message.trim().split('\n')[0]; // Take first line
-          if (suggestionText && suggestionText.toLowerCase() !== currentWord.toLowerCase()) {
-            allSuggestions.push({ text: suggestionText, type: 'ai' });
-          }
-        } catch (error) {
-          console.error("AI suggestion error:", error);
-        }
-      }
-
-      // Standard suggestions
-      if (settings.autocomplete) {
-        const allWords = content.match(/\b(\w+)\b/g) || [];
-        const uniqueWords = [...new Set(allWords)];
-        const filteredSuggestions = uniqueWords.filter(word =>
-          word.toLowerCase().startsWith(currentWord.toLowerCase()) &&
-          word.toLowerCase() !== currentWord.toLowerCase() &&
-          !allSuggestions.some(s => s.text === word) // avoid duplicates
-        ).slice(0, 5).map(s => ({ text: s, type: 'std' as const }));
-        allSuggestions.push(...filteredSuggestions);
-      }
-
-      if (allSuggestions.length > 0) {
-        setSuggestions(allSuggestions);
-        setShowSuggestions(true);
-        setSuggestionIndex(0);
-      } else {
-        setShowSuggestions(false);
-      }
-    };
-
-    // Debounce the suggestion fetching
-    const timeoutId = setTimeout(getSuggestions, settings.aiAutocomplete ? 800 : 200);
-    return () => clearTimeout(timeoutId);
-
-  }, [content, settings.autocomplete, settings.aiAutocomplete, file]);
-
-  const applySuggestion = (suggestion: { text: string; type: 'std' | 'ai' }) => {
-    if (!textareaRef.current) return;
-
-    const suggestionText = suggestion.text;
-    const cursorPosition = textareaRef.current.selectionStart;
-    const textBeforeCursor = content.substring(0, cursorPosition);
-    const wordMatch = textBeforeCursor.match(/(\S+)$/);
-    const currentWord = wordMatch ? wordMatch[1] : '';
-
-    const newContent =
-      content.substring(0, cursorPosition - currentWord.length) +
-      suggestionText + " " +
-      content.substring(cursorPosition);
-
-    handleContentChange(newContent);
-    setShowSuggestions(false);
-
-    // Move cursor to the end of the inserted word
-    setTimeout(() => {
-      if (textareaRef.current) {
-        const newCursorPosition = cursorPosition - currentWord.length + suggestionText.length + 1;
-        textareaRef.current.selectionStart = newCursorPosition;
-        textareaRef.current.selectionEnd = newCursorPosition;
-      }
-    }, 0);
-  };
-
   const saveFile = useCallback(async (filePath: string, fileContent: string) => {
     console.log("🚀 saveFile function called!");
     console.log("📂 FilePath:", filePath);
@@ -888,25 +784,6 @@ ${codeAfterCursor}
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         console.log("🎹 Key pressed:", { key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
       }
-      
-      if (showSuggestions) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          setSuggestionIndex(prev => (prev + 1) % suggestions.length);
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          setSuggestionIndex(prev => (prev - 1 + suggestions.length) % suggestions.length);
-        } else if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          if (suggestions[suggestionIndex]) {
-            applySuggestion(suggestions[suggestionIndex]);
-          }
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          setShowSuggestions(false);
-        }
-        return; // Stop further processing
-      }
 
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
         console.log("🔑 Ctrl+Shift+S detected - Save All!");
@@ -941,7 +818,7 @@ ${codeAfterCursor}
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [file, content, undo, redo, saveFile, onSaveAllFiles, showSuggestions, suggestions, suggestionIndex]);
+  }, [file, content, undo, redo, saveFile, onSaveAllFiles]);
 
   // Autosave (separate effect)
   useEffect(() => {
@@ -1145,16 +1022,6 @@ ${codeAfterCursor}
             )}
           </div>
           
-          {isMarkdown && (
-            <button
-              onClick={() => setViewMode(viewMode === "edit" ? "preview" : "edit")}
-              className={`flex items-center gap-1 rounded border border-transparent px-2 py-1 text-xs font-medium text-gray-200 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0e639c] focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d30] disabled:opacity-50 ${viewMode === "preview" ? "bg-[#0e639c] hover:bg-[#1177bb]" : "bg-[#3a3d41] hover:bg-[#45494e]"}`}
-              title={viewMode === "edit" ? "Ver previsualización" : "Volver a edición"}
-            >
-              {viewMode === "edit" ? <Book className="h-4 w-4" /> : <BookOpen className="h-4 w-4" />}
-              <span>{viewMode === "edit" ? "Preview" : "Editar"}</span>
-            </button>
-          )}
           {saveStatus === "saving" && <span className="text-blue-400">Guardando...</span>}
           {saveStatus === "saved" && <span className="text-green-400">Guardado</span>}
           {saveStatus === "unsaved" && <span className="text-yellow-400">Sin guardar</span>}
@@ -1163,32 +1030,32 @@ ${codeAfterCursor}
 
       {/* Editor */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Line Numbers */}
-  {showLineNumbers && (
-          <div className="bg-[#1e1e1e] text-[#858585] text-sm leading-6 px-3 py-4 select-none min-w-[60px] border-r border-[#3e3e3e] overflow-hidden">
-            <div 
-              className="overflow-hidden"
-              style={{ 
-                transform: `translateY(-${scrollTop}px)`,
-                transition: 'none'
-              }}
-            >
-              {lines.map((_, i) => (
-                <div key={i + 1} className="text-right h-6 flex items-center justify-end">
-                  {i + 1}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Content */}
         <div className="flex-1 relative overflow-hidden">
+          {/* Line Numbers */}
+          {showLineNumbers && (
+            <div className="absolute left-0 top-0 bg-[#1e1e1e] text-[#858585] leading-6 px-2 py-4 select-none w-[60px] border-r border-[#3e3e3e] overflow-hidden z-10">
+              <div 
+                className="overflow-hidden"
+                style={{ 
+                  transform: `translateY(-${scrollTop}px)`,
+                  transition: 'none'
+                }}
+              >
+                {lines.map((_, i) => (
+                  <div key={i + 1} className={`text-left h-6 flex items-center justify-start pl-1 ${isMarkdown ? 'text-base' : 'text-sm'}`}>
+                    {i + 1}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Syntax Highlighting Overlay */}
           {showEditor && settings.syntaxHighlighting && (
             <div
               ref={overlayRef}
-              className={`absolute inset-0 p-4 leading-6 font-mono pointer-events-none overflow-auto scrollbar-hide text-white ${editorTextSizeClass} ${
+              className={`absolute inset-0 ${showLineNumbers ? 'pl-[68px]' : 'p-4'} pr-4 pt-4 pb-4 leading-6 font-mono pointer-events-none overflow-auto scrollbar-hide text-white ${editorTextSizeClass} ${
                 settings.wordWrap ? "whitespace-pre-wrap" : "whitespace-pre"
               }`}
               style={{
@@ -1218,7 +1085,7 @@ ${codeAfterCursor}
               onMouseUp={handleTextSelection}
               onKeyUp={handleTextSelection}
               onScroll={handleScroll}
-              className={`w-full h-full bg-transparent ${settings.syntaxHighlighting ? 'text-transparent' : 'text-white'} caret-white ${editorTextSizeClass} leading-6 p-4 resize-none outline-none font-mono relative z-10 scrollbar-thin scrollbar-track-[#2d2d30] scrollbar-thumb-[#555]`}
+              className={`w-full h-full bg-transparent ${settings.syntaxHighlighting ? 'text-transparent' : 'text-white'} caret-white ${editorTextSizeClass} leading-6 ${showLineNumbers ? 'pl-[68px]' : 'pl-4'} pr-4 pt-4 pb-4 resize-none outline-none font-mono relative z-10 scrollbar-thin scrollbar-track-[#2d2d30] scrollbar-thumb-[#555]`}
               style={{
                 minHeight: "100%",
                 whiteSpace: settings.wordWrap ? "pre-wrap" : "pre",
@@ -1241,28 +1108,6 @@ ${codeAfterCursor}
                   {content}
                 </ReactMarkdown>
               </div>
-            </div>
-          )}
-          {showSuggestions && (
-            <div className="absolute z-20 bg-[#2d2d30] border border-[#3e3e3e] rounded-md shadow-lg"
-                 style={{
-                   top: `calc(${lines.length * 1.5}em + 10px)`, // Position below the text
-                   left: '10px',
-                   maxHeight: '150px',
-                   overflowY: 'auto'
-                 }}>
-              <ul className="text-sm text-white">
-                {suggestions.map((suggestion, index) => (
-                  <li
-                    key={index}
-                    className={`px-3 py-1 cursor-pointer flex items-center justify-between ${index === suggestionIndex ? 'bg-[#0e639c]' : 'hover:bg-[#3e3e3e]'}`}
-                    onClick={() => applySuggestion(suggestion)}
-                  >
-                    <span>{suggestion.text}</span>
-                    {suggestion.type === 'ai' && <span className="text-xs text-purple-400 ml-2">[AI]</span>}
-                  </li>
-                ))}
-              </ul>
             </div>
           )}
         </div>

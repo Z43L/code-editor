@@ -278,7 +278,7 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
         file_content: files[activeFile]?.content,
         selected_text: selectedText,
         has_selection: hasSelection,
-        max_tokens: 1000,
+        max_tokens: 80000,
         context: contextPayload,
       }
 

@@ -376,35 +376,36 @@ a,
 
 /* Markdown Preview Styles */
 .markdown-preview h1 {
-  font-size: 1rem;
-  font-weight: 400;
+  font-size: 2rem;
+  font-weight: 600;
   color: oklch(0.75 0 0);
-  margin: 0;
+  margin: 1.5rem 0 1rem 0;
   border: none;
   padding: 0;
-  display: inline;
+  display: block;
 }
 
 .markdown-preview h2 {
-  font-size: 1rem;
-  font-weight: 400;
+  font-size: 1.5rem;
+  font-weight: 500;
   color: oklch(0.75 0 0);
-  margin: 0;
-  display: inline;
+  margin: 1.25rem 0 0.75rem 0;
+  display: block;
 }
 
 .markdown-preview h3 {
-  font-size: 1rem;
-  font-weight: 400;
+  font-size: 1.25rem;
+  font-weight: 500;
   color: oklch(0.75 0 0);
-  margin: 0;
-  display: inline;
+  margin: 1rem 0 0.5rem 0;
+  display: block;
 }
 
 .markdown-preview p {
-  margin: 0;
+  margin: 0.75rem 0;
   color: oklch(0.75 0 0);
   display: inline;
+  line-height: 1.6;
 }
 
 .markdown-preview ul,
@@ -427,15 +428,15 @@ a,
 }
 
 .markdown-preview pre {
-  background-color: #202124;
+  background-color: #070606ad;
   border: none;
-  border-radius: 0.5rem;
+  border-radius: 0.2rem;
   padding: 0;
   overflow-x: auto;
   margin: 0;
   width: fit-content;
   max-width: 100%;
-  
+  display: inline;
   color:aqua;
 }
 
