@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Book, BookOpen } from "lucide-react"
+import { Book, BookOpen, Save } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import type { Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -20,6 +20,7 @@ interface EditorContentProps {
   onLoadFileContent?: (filePath: string) => Promise<string>
   editorSettings?: EditorSettings
   onSaveFile?: (filePath: string, content: string) => void
+  onSaveAllFiles?: () => Promise<void>
 }
 
 const getLanguageFromExtension = (filename: string): string => {
@@ -520,8 +521,9 @@ const highlightSyntax = (code: string, language: string): string => {
   return highlighted
 }
 
-export function EditorContent({ file, onContentChange, files, onCreateFile, onLoadFileContent, editorSettings, onSaveFile }: EditorContentProps) {
+export function EditorContent({ file, onContentChange, files, onCreateFile, onLoadFileContent, editorSettings, onSaveFile, onSaveAllFiles }: EditorContentProps) {
   const [content, setContent] = useState(file?.content || "")
+  const [lastSavedContent, setLastSavedContent] = useState(file?.content || "")
   const [selectedText, setSelectedText] = useState("")
   const [selectionStart, setSelectionStart] = useState(0)
   const [selectionEnd, setSelectionEnd] = useState(0)
@@ -531,6 +533,7 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
   const [suggestions, setSuggestions] = useState<Array<{ text: string; type: 'std' | 'ai' }>>([])
   const [suggestionIndex, setSuggestionIndex] = useState(0)
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [currentFilePath, setCurrentFilePath] = useState(file?.path || "")
   
   // Undo/Redo history state
   const [history, setHistory] = useState<string[]>([file?.content || ""])
@@ -539,6 +542,15 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
   
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+
+  // Debug environment on mount
+  useEffect(() => {
+    console.log("🔍 ENVIRONMENT DEBUG:");
+    console.log("- isElectron detected:", typeof (window as any).electronAPI !== 'undefined');
+    console.log("- electronAPI object:", (window as any).electronAPI);
+    console.log("- saveFileAuto function:", (window as any).electronAPI?.saveFileAuto);
+    console.log("- onSaveFile prop:", !!onSaveFile);
+  }, [])
 
   // Default settings
   const settings = editorSettings || {
@@ -644,9 +656,15 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
       setContent(previousContent)
       setHistoryIndex(newIndex)
       onContentChange(previousContent)
-      setSaveStatus("unsaved")
+      
+      // Check if undo content matches last saved content
+      if (previousContent !== lastSavedContent) {
+        setSaveStatus("unsaved")
+      } else {
+        setSaveStatus("saved")
+      }
     }
-  }, [history, historyIndex, onContentChange])
+  }, [history, historyIndex, onContentChange, lastSavedContent])
 
   // Redo function
   const redo = useCallback(() => {
@@ -657,9 +675,15 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
       setContent(nextContent)
       setHistoryIndex(newIndex)
       onContentChange(nextContent)
-      setSaveStatus("unsaved")
+      
+      // Check if redo content matches last saved content
+      if (nextContent !== lastSavedContent) {
+        setSaveStatus("unsaved")
+      } else {
+        setSaveStatus("saved")
+      }
     }
-  }, [history, historyIndex, onContentChange])
+  }, [history, historyIndex, onContentChange, lastSavedContent])
 
   // Add to history function
   const addToHistory = useCallback((newContent: string) => {
@@ -689,22 +713,35 @@ export function EditorContent({ file, onContentChange, files, onCreateFile, onLo
   const handleContentChange = useCallback((newContent: string) => {
     setContent(newContent)
     onContentChange(newContent)
-    setSaveStatus("unsaved")
+    
+    // Only mark as unsaved if content actually differs from last saved version
+    if (newContent !== lastSavedContent) {
+      setSaveStatus("unsaved")
+    } else {
+      setSaveStatus("saved")
+    }
     
     // Add to history with a small delay to avoid too many entries
     setTimeout(() => addToHistory(newContent), 500)
-  }, [onContentChange, addToHistory])
+  }, [onContentChange, addToHistory, lastSavedContent])
 
-  // Update content when file changes
+  // Update content when switching files (not when content changes within same file)
   useEffect(() => {
+    const newFilePath = file?.path || ""
     const newContent = file?.content || ""
-    setContent(newContent)
-    setSaveStatus("saved")
-    // Reset history when switching files
-    setHistory([newContent])
-    setHistoryIndex(0)
-    setIsUndoRedo(false)
-  }, [file])
+    
+    // Only reset if we're switching to a different file
+    if (newFilePath !== currentFilePath) {
+      setCurrentFilePath(newFilePath)
+      setContent(newContent)
+      setLastSavedContent(newContent) // Initialize last saved content
+      setSaveStatus("saved")
+      // Reset history when switching files
+      setHistory([newContent])
+      setHistoryIndex(0)
+      setIsUndoRedo(false)
+    }
+  }, [file?.path, currentFilePath]) // Only watch for path changes
 
   // Autocomplete logic
   useEffect(() => {
@@ -810,9 +847,48 @@ ${codeAfterCursor}
     }, 0);
   };
 
-  // Keyboard shortcuts & Autosave
+  const saveFile = useCallback(async (filePath: string, fileContent: string) => {
+    console.log("🚀 saveFile function called!");
+    console.log("📂 FilePath:", filePath);
+    console.log("📄 Content preview:", fileContent.slice(0, 100) + "...");
+    console.log("🔌 onSaveFile exists:", !!onSaveFile);
+    
+    if (!onSaveFile) {
+      console.log("❌ onSaveFile is null/undefined - ABORTING");
+      return;
+    }
+
+    console.log("💾 Setting status to 'saving'...");
+    setSaveStatus("saving");
+    
+    try {
+      console.log("🔄 Calling onSaveFile...");
+      await onSaveFile(filePath, fileContent);
+      console.log("✅ onSaveFile completed successfully!");
+      
+      console.log("📝 Updating lastSavedContent...");
+      setLastSavedContent(fileContent);
+      
+      console.log("💚 Setting status to 'saved'...");
+      setSaveStatus("saved");
+      
+      console.log("🎉 Save process COMPLETED successfully for:", filePath);
+    } catch (error) {
+      console.error("💥 Save process FAILED:");
+      console.error("❌ Error details:", error);
+      console.log("🔴 Setting status back to 'unsaved'...");
+      setSaveStatus("unsaved");
+    }
+  }, [onSaveFile]);
+
+  // Keyboard shortcuts (separate from autosave to avoid re-registering on content changes)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Only log save shortcuts to avoid spam
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        console.log("🎹 Key pressed:", { key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
+      }
+      
       if (showSuggestions) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
@@ -832,10 +908,23 @@ ${codeAfterCursor}
         return; // Stop further processing
       }
 
-      if (e.ctrlKey && e.key === 's') {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
+        console.log("🔑 Ctrl+Shift+S detected - Save All!");
+        e.preventDefault();
+        if (onSaveAllFiles) {
+          console.log("📁 Calling saveAllFiles");
+          onSaveAllFiles();
+        } else {
+          console.log("❌ onSaveAllFiles not available");
+        }
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        console.log("🔑 Ctrl+S detected!");
         e.preventDefault();
         if (file) {
+          console.log("📁 File exists, calling saveFile");
           saveFile(file.path, content);
+        } else {
+          console.log("❌ No file to save");
         }
       } else if (e.ctrlKey && e.shiftKey && e.key === 'Z') {
         e.preventDefault();
@@ -846,39 +935,31 @@ ${codeAfterCursor}
       }
     };
 
-    const target = textareaRef.current;
-    target?.addEventListener('keydown', handleKeyDown);
+    // Add listener to document for global coverage
+    document.addEventListener('keydown', handleKeyDown);
 
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [file, content, undo, redo, saveFile, onSaveAllFiles, showSuggestions, suggestions, suggestionIndex]);
+
+  // Autosave (separate effect)
+  useEffect(() => {
     let autosaveTimeout: NodeJS.Timeout;
     if (settings.autosave && saveStatus === 'unsaved' && file) {
+      console.log("⏰ Setting autosave timeout");
       autosaveTimeout = setTimeout(() => {
+        console.log("💾 Autosave triggered");
         saveFile(file.path, content);
       }, 1500);
     }
 
     return () => {
-      target?.removeEventListener('keydown', handleKeyDown);
-      clearTimeout(autosaveTimeout);
+      if (autosaveTimeout) {
+        clearTimeout(autosaveTimeout);
+      }
     };
-  }, [file, content, settings.autosave, saveStatus, undo, redo, saveFile, showSuggestions, suggestions, suggestionIndex]);
-
-  const saveFile = useCallback(async (filePath: string, fileContent: string) => {
-    if (!onSaveFile) return;
-
-    setSaveStatus("saving");
-    try {
-      await onSaveFile(filePath, fileContent);
-      setSaveStatus("saved");
-      setTimeout(() => {
-        // You might want to remove this if you want the "saved" status to be persistent
-        // until the next change.
-        // setSaveStatus("saved");
-      }, 2000);
-    } catch (error) {
-      console.error("Failed to save file:", error);
-      setSaveStatus("unsaved");
-    }
-  }, [onSaveFile]);
+  }, [settings.autosave, saveStatus, file, content, saveFile]);
 
   const handleTextSelection = useCallback(() => {
     if (textareaRef.current) {
@@ -1005,6 +1086,65 @@ ${codeAfterCursor}
         <div className="flex items-center gap-4 text-xs text-gray-400">
           <span>Líneas: {lineCount}</span>
           <span>Caracteres: {content.length}</span>
+          
+          {/* Save Buttons */}
+          <div className="flex items-center gap-1">
+            {/* Save Current File */}
+            <button
+              onClick={() => {
+                console.log("🖱️ BUTTON CLICKED - Save button!");
+                console.log("📁 File exists:", !!file);
+                console.log("📄 File path:", file?.path);
+                console.log("📝 Content length:", content.length);
+                console.log("� Save status:", saveStatus);
+                if (file) {
+                  console.log("✅ Calling saveFile function...");
+                  saveFile(file.path, content);
+                } else {
+                  console.log("❌ No file to save");
+                }
+              }}
+              disabled={saveStatus === "saving" || !file}
+              className={`flex items-center justify-center w-8 h-8 rounded transition-all duration-200 ${
+                saveStatus === "unsaved" 
+                  ? "bg-[#2d2d30] hover:bg-[#3a3a3a] text-yellow-400 border border-yellow-400/30" 
+                  : saveStatus === "saving"
+                  ? "bg-[#2d2d30] text-blue-400 cursor-not-allowed"
+                  : "bg-[#1a1a1a] hover:bg-[#2d2d30] text-gray-500 border border-gray-600/30"
+              }`}
+              title={
+                saveStatus === "unsaved" 
+                  ? "Guardar archivo actual (Ctrl+S)" 
+                  : saveStatus === "saving" 
+                  ? "Guardando..." 
+                  : "Archivo guardado"
+              }
+            >
+              <Save className="h-4 w-4" />
+            </button>
+            
+            {/* Save All Files */}
+            {onSaveAllFiles && (
+              <button
+                onClick={async () => {
+                  try {
+                    console.log("🖱️ Save all button clicked");
+                    await onSaveAllFiles();
+                  } catch (error) {
+                    console.error("Error saving all files:", error);
+                  }
+                }}
+                className="flex items-center justify-center w-8 h-8 rounded transition-all duration-200 bg-[#1a1a1a] hover:bg-[#2d2d30] text-gray-400 border border-gray-600/30 hover:text-white"
+                title="Guardar todos los archivos sin guardar (Ctrl+Shift+S)"
+              >
+                <div className="relative">
+                  <Save className="h-3 w-3" />
+                  <Save className="h-3 w-3 absolute -top-0.5 -right-0.5 opacity-60" />
+                </div>
+              </button>
+            )}
+          </div>
+          
           {isMarkdown && (
             <button
               onClick={() => setViewMode(viewMode === "edit" ? "preview" : "edit")}
@@ -1017,7 +1157,7 @@ ${codeAfterCursor}
           )}
           {saveStatus === "saving" && <span className="text-blue-400">Guardando...</span>}
           {saveStatus === "saved" && <span className="text-green-400">Guardado</span>}
-          {saveStatus === "unsaved" && <span className="text-yellow-400">Sin guardar (Ctrl+S)</span>}
+          {saveStatus === "unsaved" && <span className="text-yellow-400">Sin guardar</span>}
         </div>
       </div>
 

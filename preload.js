@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File system operations
   openFile: () => ipcRenderer.invoke('dialog:openFile'),
   saveFile: (content) => ipcRenderer.invoke('dialog:saveFile', content),
+  saveFileAuto: (filePath, content) => ipcRenderer.invoke('fs:saveFile', filePath, content),
   openDirectory: async () => {
     console.log('🔍 [PRELOAD] Calling dialog:openDirectory...');
     const result = await ipcRenderer.invoke('dialog:openDirectory');
@@ -112,7 +113,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true
 });
 
-console.log('[PRELOAD] electronAPI exposed successfully:', Object.keys(window.electronAPI || {}));
+console.log('[PRELOAD] electronAPI exposed successfully!');
+console.log('[PRELOAD] Available functions:', Object.keys(window.electronAPI || {}));
+console.log('[PRELOAD] saveFileAuto function exists:', typeof window.electronAPI?.saveFileAuto);
 
 // Remove the loading text when the page is ready
 window.addEventListener('DOMContentLoaded', () => {

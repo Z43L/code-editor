@@ -369,20 +369,100 @@ export function FlutterEditor() {
   }, [mergeContextIndex])
 
   const saveFile = useCallback(async (filePath: string, content: string) => {
+    console.log("🏭 FLUTTER-EDITOR: saveFile called!");
+    console.log("🔧 isElectron:", isElectron);
+    console.log("⚡ electronAPI exists:", !!(window as any).electronAPI);
+    console.log("📂 FilePath (relative):", filePath);
+    console.log("📁 WorkspacePath:", workspacePath);
+    console.log("📄 Content length:", content.length);
+    
+    // Build absolute path
+    const absolutePath = workspacePath ? `${workspacePath}/${filePath}` : filePath;
+    console.log("📍 Absolute path:", absolutePath);
+    
     if (isElectron && (window as any).electronAPI) {
+      console.log("✅ Electron environment detected, proceeding with save...");
       try {
-        const result = await (window as any).electronAPI.saveFile(filePath, content);
+        console.log("🔄 Calling electronAPI.saveFileAuto...");
+        
+        // Check if saveFileAuto exists, if not, suggest restart
+        if (typeof (window as any).electronAPI.saveFileAuto !== 'function') {
+          console.error("❌ saveFileAuto is not a function. App needs restart!");
+          throw new Error('saveFileAuto function not available. Please restart the Electron application.');
+        }
+        
+        const result = await (window as any).electronAPI.saveFileAuto(absolutePath, content);
+        console.log("📡 electronAPI response:", result);
+        
         if (result.success) {
-          console.log(`File saved: ${filePath}`);
-          // Optionally, you can update the file hash or other metadata here
+          console.log(`✅ File saved successfully: ${absolutePath}`);
         } else {
-          console.error(`Error saving file: ${result.error}`);
+          console.error(`❌ Electron API error: ${result.error}`);
+          throw new Error(`Failed to save file: ${result.error}`);
         }
       } catch (error) {
-        console.error('Error calling saveFile:', error);
+        console.error('💥 Error in saveFile flutter-editor:', error);
+        throw error; // Re-throw to let the EditorContent component handle the error
       }
+    } else {
+      console.warn('🚫 Electron environment not detected, file save skipped');
+      console.log('🔍 Debug info:', {
+        isElectron,
+        electronAPIExists: !!(window as any).electronAPI,
+        windowElectron: typeof (window as any).electron,
+        electronAPIType: typeof (window as any).electronAPI
+      });
+      throw new Error('File save not available in this environment');
     }
-  }, [isElectron]);
+  }, [isElectron, workspacePath]);
+
+  const saveAllFiles = useCallback(async () => {
+    if (!isElectron || !(window as any).electronAPI) {
+      console.warn('Electron environment not detected, save all skipped');
+      throw new Error('File save not available in this environment');
+    }
+
+    const unsavedFiles = Object.values(files).filter(file => 
+      file.content !== undefined && file.type === 'file'
+    );
+
+    if (unsavedFiles.length === 0) {
+      console.log('No files to save');
+      return;
+    }
+
+    console.log(`Saving ${unsavedFiles.length} files...`);
+    
+    const savePromises = unsavedFiles.map(async (file) => {
+      try {
+        // Build absolute path for each file
+        const absolutePath = workspacePath ? `${workspacePath}/${file.path}` : file.path;
+        console.log(`💾 Saving: ${file.path} → ${absolutePath}`);
+        
+        const result = await (window as any).electronAPI.saveFileAuto(absolutePath, file.content);
+        if (result.success) {
+          console.log(`✅ Saved: ${file.path}`);
+          return { success: true, path: file.path };
+        } else {
+          console.error(`❌ Failed to save ${file.path}: ${result.error}`);
+          return { success: false, path: file.path, error: result.error };
+        }
+      } catch (error) {
+        console.error(`❌ Error saving ${file.path}:`, error);
+        return { success: false, path: file.path, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
+
+    const results = await Promise.all(savePromises);
+    const failed = results.filter(r => !r.success);
+    
+    if (failed.length > 0) {
+      console.error(`Failed to save ${failed.length} files:`, failed);
+      throw new Error(`Failed to save ${failed.length} files`);
+    } else {
+      console.log(`✅ Successfully saved all ${results.length} files`);
+    }
+  }, [isElectron, files, workspacePath]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     setIsResizing(true)
@@ -517,6 +597,7 @@ export function FlutterEditor() {
             onLoadFileContent={loadFileContent}
             editorSettings={editorSettings}
             onSaveFile={saveFile}
+            onSaveAllFiles={saveAllFiles}
           />
         </div>
       </div>

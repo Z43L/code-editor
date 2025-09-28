@@ -331,6 +331,24 @@ ipcMain.handle('dialog:saveFile', async (event, content) => {
   }
 });
 
+// Auto save file to specified path without dialog
+ipcMain.handle('fs:saveFile', async (event, filePath, content) => {
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    fs.writeFileSync(filePath, content, 'utf-8');
+    console.log('[MAIN] File saved automatically:', filePath);
+    return { success: true, filePath: filePath };
+  } catch (error) {
+    console.error('[MAIN] Error saving file:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('app:getVersion', () => {
   return app.getVersion();
 });
