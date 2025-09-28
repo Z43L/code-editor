@@ -21,9 +21,30 @@ interface ChatFile {
 class ChatService {
   private workspacePath: string | null = null;
   private currentSession: ChatSession | null = null;
+  private chatsRelativeDirectory: string = 'chats';
+  private chatFileName: string = 'chat.md';
 
   setWorkspacePath(path: string) {
     this.workspacePath = path;
+  }
+
+  setChatDirectory(relativePath: string) {
+    const sanitized = this.sanitizeRelativeDirectory(relativePath);
+    this.chatsRelativeDirectory = sanitized;
+    console.log('[ChatService] Chat directory set to:', sanitized);
+  }
+
+  getChatDirectory(): string {
+    return this.chatsRelativeDirectory;
+  }
+
+  setChatFileName(fileName: string) {
+    this.chatFileName = this.sanitizeFileName(fileName);
+    console.log('[ChatService] Chat file name set to:', this.chatFileName);
+  }
+
+  getChatFileName(): string {
+    return this.chatFileName;
   }
 
   async createChatsFolder(): Promise<boolean> {
@@ -33,7 +54,10 @@ class ChatService {
     }
 
     try {
-      const result = await (window as any).electronAPI?.createChatsFolder(this.workspacePath);
+      const result = await (window as any).electronAPI?.createChatsFolder(
+        this.workspacePath,
+        this.chatsRelativeDirectory
+      );
       const success = result?.success || false;
       
       // Refrescar el FileTree si se creó la carpeta exitosamente
@@ -91,9 +115,11 @@ class ChatService {
 
     try {
       const content = this.formatSessionAsMarkdown(this.currentSession);
+      console.log('[ChatService] Saving session to directory:', this.chatsRelativeDirectory);
       const result = await (window as any).electronAPI?.saveChatToFile(
         this.workspacePath,
-        this.currentSession.name,
+        this.chatsRelativeDirectory,
+        this.chatFileName,
         content
       );
 
@@ -126,7 +152,10 @@ class ChatService {
     }
 
     try {
-      const result = await (window as any).electronAPI?.listChatFiles(this.workspacePath);
+      const result = await (window as any).electronAPI?.listChatFiles(
+        this.workspacePath,
+        this.chatsRelativeDirectory
+      );
       return result?.files || [];
     } catch (error) {
       console.error('Error listing chat files:', error);
@@ -150,6 +179,49 @@ class ChatService {
 
   private generateSessionId(): string {
     return `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  private sanitizeRelativeDirectory(relativePath: string): string {
+    if (!relativePath) {
+      return 'chats';
+    }
+
+    const normalized = relativePath
+      .trim()
+      .replace(/^(?:\.\/)+/, '')
+      .replace(/^\/+/, '')
+      .replace(/^\\+/, '')
+      .replace(/\\/g, '/');
+
+    const safeSegments = normalized
+      .split('/')
+      .map((segment) => segment.trim())
+      .filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+
+    return safeSegments.length > 0 ? safeSegments.join('/') : 'chats';
+  }
+
+  private sanitizeFileName(fileName: string): string {
+    const fallback = 'chat.md';
+    if (!fileName || typeof fileName !== 'string') {
+      return fallback;
+    }
+
+    const trimmed = fileName.trim();
+    if (!trimmed) {
+      return fallback;
+    }
+
+    const normalized = trimmed.replace(/[\\/]/g, '');
+    const hasMarkdownExtension = normalized.toLowerCase().endsWith('.md');
+    const baseName = hasMarkdownExtension ? normalized.slice(0, -3) : normalized;
+
+    const sanitizedBase = baseName
+      .replace(/[^a-z0-9\-_.\s]/gi, '')
+      .replace(/\s+/g, '-');
+
+    const finalBase = sanitizedBase || 'chat';
+    return `${finalBase}.md`;
   }
 
   private formatSessionAsMarkdown(session: ChatSession): string {

@@ -67,23 +67,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   
   // Chat management APIs
-  createChatsFolder: async (workspacePath) => {
-    console.log('📁 [PRELOAD] Creating chats folder in:', workspacePath);
-    const result = await ipcRenderer.invoke('fs:createChatsFolder', workspacePath);
+  createChatsFolder: async (workspacePath, relativeDir = 'chats') => {
+    console.log('📁 [PRELOAD] Creating chats folder in:', workspacePath, 'dir:', relativeDir);
+    const result = await ipcRenderer.invoke('fs:createChatsFolder', workspacePath, relativeDir);
     console.log('📦 [PRELOAD] Chats folder:', result.success ? (result.created ? 'CREATED' : 'EXISTS') : 'FAILED');
     return result;
   },
   
-  saveChatToFile: async (workspacePath, fileName, content) => {
-    console.log('💾 [PRELOAD] Saving chat:', fileName);
-    const result = await ipcRenderer.invoke('fs:saveChatToFile', workspacePath, fileName, content);
+  saveChatToFile: async (workspacePath, relativeDir, fileName, content) => {
+    console.log('💾 [PRELOAD] Saving chat:', fileName, 'dir:', relativeDir);
+    const result = await ipcRenderer.invoke('fs:saveChatToFile', workspacePath, relativeDir, fileName, content);
     console.log('📦 [PRELOAD] Chat saved:', result.success ? result.fileName : 'FAILED');
     return result;
   },
   
-  listChatFiles: async (workspacePath) => {
-    console.log('📋 [PRELOAD] Listing chat files in:', workspacePath);
-    const result = await ipcRenderer.invoke('fs:listChatFiles', workspacePath);
+  listChatFiles: async (workspacePath, relativeDir = 'chats') => {
+    console.log('📋 [PRELOAD] Listing chat files in:', workspacePath, 'dir:', relativeDir);
+    const result = await ipcRenderer.invoke('fs:listChatFiles', workspacePath, relativeDir);
     console.log('📦 [PRELOAD] Chat files found:', result.success ? result.files?.length : 'FAILED');
     return result;
   },

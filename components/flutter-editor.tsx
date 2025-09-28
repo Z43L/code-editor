@@ -1,7 +1,8 @@
 "use client"
 
 import React, { useState, useRef, useCallback, useEffect } from "react"
-import { FileTree } from "./file-tree"
+import { FileTree, DEFAULT_EDITOR_SETTINGS } from "./file-tree"
+import type { EditorSettings } from "./file-tree"
 import { EditorContent } from "./editor-content"
 import { AICommandBar } from "./ai-command-bar"
 import { useElectron } from "../hooks/use-electron"
@@ -78,14 +79,7 @@ que la fuerza te acompañe
 
 export function FlutterEditor() {
   const [activeFile, setActiveFile] = useState<string>("README.md")
-  const [editorSettings, setEditorSettings] = useState({
-    lineNumbers: true,
-    syntaxHighlighting: true,
-    wordWrap: false,
-    autoResponses: true,
-    codeSuggestions: true,
-    chatFileName: "chat.md",
-  })
+  const [editorSettings, setEditorSettings] = useState<EditorSettings>({ ...DEFAULT_EDITOR_SETTINGS })
   const [aiProvider, setAiProvider] = useState<AIProvider>({
     type: 'openrouter',
     apiKey: '',
@@ -96,6 +90,19 @@ export function FlutterEditor() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [workspacePath, setWorkspacePath] = useState<string>("")
   const sidebarRef = useRef<HTMLDivElement>(null)
+
+  const handleEditorSettingsChange = useCallback((settings: EditorSettings) => {
+    setEditorSettings((prev) => {
+      const merged: EditorSettings = {
+        ...prev,
+        ...settings,
+        chatDirectory: typeof settings.chatDirectory === 'string' && settings.chatDirectory.trim()
+          ? settings.chatDirectory.trim()
+          : DEFAULT_EDITOR_SETTINGS.chatDirectory,
+      }
+      return merged
+    })
+  }, [])
 
   // Detectar si estamos en Electron de manera segura para SSR
   const { isElectron, isHydrated } = useElectron()
@@ -113,7 +120,14 @@ export function FlutterEditor() {
         const savedEditorSettings = localStorage.getItem('editorSettings')
         if (savedEditorSettings) {
           const parsedSettings = JSON.parse(savedEditorSettings)
-          setEditorSettings(parsedSettings)
+          const mergedSettings: EditorSettings = {
+            ...DEFAULT_EDITOR_SETTINGS,
+            ...parsedSettings,
+            chatDirectory: typeof parsedSettings.chatDirectory === 'string' && parsedSettings.chatDirectory.trim()
+              ? parsedSettings.chatDirectory.trim()
+              : DEFAULT_EDITOR_SETTINGS.chatDirectory,
+          }
+          setEditorSettings(mergedSettings)
         }
       } catch (error) {
         console.error('Error loading saved configuration:', error)
@@ -123,12 +137,15 @@ export function FlutterEditor() {
 
   // Configurar el servicio de chat cuando cambie el directorio de trabajo
   useEffect(() => {
+    chatService.setChatNameConfig(editorSettings.chatFileName.replace('.md', ''))
+    chatService.setChatDirectory(editorSettings.chatDirectory)
+    chatService.setChatFileName(editorSettings.chatFileName)
+
     if (workspacePath) {
       chatService.setWorkspacePath(workspacePath)
-      chatService.setChatNameConfig(editorSettings.chatFileName.replace('.md', ''))
       console.log('Chat service configured for workspace:', workspacePath)
     }
-  }, [workspacePath, editorSettings.chatFileName])
+  }, [workspacePath, editorSettings.chatFileName, editorSettings.chatDirectory])
   const [files, setFiles] = useState<Record<string, FileItem>>(() => {
     const snapshot = createSnapshotFromContent("README.md", DEFAULT_README_CONTENT)
     return {
@@ -456,7 +473,7 @@ export function FlutterEditor() {
               onCreateFile={createFile}
               onLoadRealFileContent={handleLoadRealFileContent}
               editorSettings={editorSettings}
-              onSettingsChange={setEditorSettings}
+              onSettingsChange={handleEditorSettingsChange}
               aiProvider={aiProvider}
               onAiProviderChange={setAiProvider}
               onWorkspacePathChange={setWorkspacePath}
@@ -495,6 +512,7 @@ export function FlutterEditor() {
         onCreateFile={createFile}
         aiProvider={aiProvider}
         chatFileName={editorSettings.chatFileName}
+        chatDirectory={editorSettings.chatDirectory}
         onSelectFile={handleFileSelect}
         fileContextIndex={fileContextIndex}
       />

@@ -7,28 +7,43 @@ import { useElectron } from "../hooks/use-electron"
 import type { FileItem } from "./flutter-editor"
 import type { AIProvider, FileContextSnapshot } from "../lib/ai-service"
 
+interface EditorSettings {
+  lineNumbers: boolean
+  syntaxHighlighting: boolean
+  wordWrap: boolean
+  autoResponses: boolean
+  codeSuggestions: boolean
+  chatFileName: string
+  chatDirectory: string
+}
+
+type BooleanEditorSetting =
+  | 'lineNumbers'
+  | 'syntaxHighlighting'
+  | 'wordWrap'
+  | 'autoResponses'
+  | 'codeSuggestions'
+
+export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
+  lineNumbers: true,
+  syntaxHighlighting: true,
+  wordWrap: false,
+  autoResponses: true,
+  codeSuggestions: true,
+  chatFileName: "chat.md",
+  chatDirectory: "chats",
+}
+
+export type { EditorSettings }
+
 interface FileTreeProps {
   activeFile: string
   onFileSelect: (filePath: string) => void
   files: Record<string, FileItem>
   onCreateFile: (filePath: string, content?: string) => void
   onLoadRealFileContent?: (filePath: string, content: string) => void
-  editorSettings?: {
-    lineNumbers: boolean
-    syntaxHighlighting: boolean
-    wordWrap: boolean
-    autoResponses: boolean
-    codeSuggestions: boolean
-    chatFileName: string
-  }
-  onSettingsChange?: (settings: {
-    lineNumbers: boolean
-    syntaxHighlighting: boolean
-    wordWrap: boolean
-    autoResponses: boolean
-    codeSuggestions: boolean
-    chatFileName: string
-  }) => void
+  editorSettings?: EditorSettings
+  onSettingsChange?: (settings: EditorSettings) => void
   aiProvider?: AIProvider
   onAiProviderChange?: (provider: AIProvider) => void
   onWorkspacePathChange?: (path: string) => void
@@ -377,14 +392,17 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
   }, [contextMenu])
   
   // Use default settings if not provided
-  const currentSettings = editorSettings || {
-    lineNumbers: true,
-    syntaxHighlighting: true,
-    wordWrap: false,
-    autoResponses: true,
-    codeSuggestions: true,
-    chatFileName: "chat.md",
-  }
+  const currentSettings = useMemo<EditorSettings>(() => {
+    if (!editorSettings) {
+        return DEFAULT_EDITOR_SETTINGS
+    }
+
+    return {
+        ...DEFAULT_EDITOR_SETTINGS,
+      ...editorSettings,
+      chatDirectory: editorSettings.chatDirectory?.trim() ? editorSettings.chatDirectory : 'chats'
+    }
+    }, [editorSettings])
 
   // Use default AI provider if not provided
   const currentAiProvider = aiProvider || {
@@ -1705,13 +1723,30 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
     }
   }, [activeFile, expandedFolders, loadingPaths, toggleFolder, handleContextMenu, handleFileSelectOptimized, dragOverTarget, draggedItem, handleDragStart, handleDragEnd, handleDragOver, handleDragLeave, handleDrop])
 
-  const handleSettingChange = (setting: keyof typeof currentSettings) => {
+  const handleSettingChange = (setting: BooleanEditorSetting) => {
     if (onSettingsChange) {
       onSettingsChange({
         ...currentSettings,
         [setting]: !currentSettings[setting]
       })
     }
+  }
+
+  const handleChatDirectoryChange = (value: string) => {
+    if (!onSettingsChange) {
+      return
+    }
+
+    const sanitizedValue = value
+      .trim()
+      .replace(/^(?:\.\/)+/, '')
+      .replace(/^\/+/, '')
+      .replace(/^\\+/, '')
+
+    onSettingsChange({
+      ...currentSettings,
+      chatDirectory: sanitizedValue || 'chats'
+    })
   }
 
   const clearWorkingDirectory = () => {
@@ -2296,6 +2331,17 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     }}
                     className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
                     placeholder="chat.md"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs text-gray-300">Directorio para guardar chats (ruta relativa):</label>
+                  <input
+                    type="text"
+                    value={currentSettings.chatDirectory}
+                    onChange={(e) => handleChatDirectoryChange(e.target.value)}
+                    className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                    placeholder="chats"
                   />
                 </div>
 

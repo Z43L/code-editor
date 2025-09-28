@@ -7,6 +7,49 @@ const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !==
 
 let mainWindow;
 
+const sanitizeRelativeDirectory = (relativeDir) => {
+  if (typeof relativeDir !== 'string') {
+    return 'chats';
+  }
+
+  const normalized = relativeDir
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/^\/+/, '')
+    .replace(/^\\+/, '')
+    .replace(/\\/g, '/');
+
+  const segments = normalized
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+
+  return segments.length > 0 ? segments.join('/') : 'chats';
+};
+
+const sanitizeFileName = (fileName) => {
+  const fallback = 'chat.md';
+  if (!fileName || typeof fileName !== 'string') {
+    return fallback;
+  }
+
+  const trimmed = fileName.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+
+  const normalized = trimmed.replace(/[\\/]/g, '');
+  const hasMarkdownExtension = normalized.toLowerCase().endsWith('.md');
+  const baseName = hasMarkdownExtension ? normalized.slice(0, -3) : normalized;
+
+  const sanitizedBase = baseName
+    .replace(/[^a-z0-9\-_.\s]/gi, '')
+    .replace(/\s+/g, '-');
+
+  const finalBase = sanitizedBase || 'chat';
+  return `${finalBase}.md`;
+};
+
 function createWindow() {
   const preloadPath = path.join(__dirname, 'preload.js');
   console.log('[MAIN] Preload script path:', preloadPath);
@@ -828,21 +871,22 @@ ipcMain.handle('fs:moveFileOrDirectory', async (event, sourcePath, destPath) => 
 });
 
 // Handler para crear carpeta de chats
-ipcMain.handle('fs:createChatsFolder', async (event, workspacePath) => {
+ipcMain.handle('fs:createChatsFolder', async (event, workspacePath, relativeDir = 'chats') => {
   try {
-    const chatsPath = path.join(workspacePath, 'chats');
+    const safeRelativeDir = sanitizeRelativeDirectory(relativeDir);
+    const chatsPath = path.join(workspacePath, safeRelativeDir);
     console.log('[DEBUG] Creating chats folder at:', chatsPath);
     
     // Verificar si la carpeta ya existe
     try {
       await fs.promises.access(chatsPath, fs.constants.F_OK);
       console.log('[DEBUG] Chats folder already exists');
-      return { success: true, path: chatsPath, created: false };
+      return { success: true, path: chatsPath, created: false, relativePath: safeRelativeDir };
     } catch (error) {
       // La carpeta no existe, crearla
       await fs.promises.mkdir(chatsPath, { recursive: true });
       console.log('[DEBUG] Chats folder created successfully');
-      return { success: true, path: chatsPath, created: true };
+      return { success: true, path: chatsPath, created: true, relativePath: safeRelativeDir };
     }
   } catch (error) {
     console.error('Error creating chats folder:', error);
@@ -851,9 +895,10 @@ ipcMain.handle('fs:createChatsFolder', async (event, workspacePath) => {
 });
 
 // Handler para guardar conversación en archivo MD
-ipcMain.handle('fs:saveChatToFile', async (event, workspacePath, fileName, content) => {
+ipcMain.handle('fs:saveChatToFile', async (event, workspacePath, relativeDir = 'chats', fileName, content) => {
   try {
-    const chatsPath = path.join(workspacePath, 'chats');
+    const safeRelativeDir = sanitizeRelativeDirectory(relativeDir);
+    const chatsPath = path.join(workspacePath, safeRelativeDir);
     
     // Asegurar que la carpeta chats existe
     try {
@@ -862,10 +907,7 @@ ipcMain.handle('fs:saveChatToFile', async (event, workspacePath, fileName, conte
       await fs.promises.mkdir(chatsPath, { recursive: true });
     }
     
-    // Sanitizar el nombre del archivo
-    const sanitizedFileName = fileName.replace(/[^a-z0-9\-_\s]/gi, '').replace(/\s+/g, '-');
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-    const fullFileName = `${sanitizedFileName}-${timestamp}.md`;
+    const fullFileName = sanitizeFileName(fileName);
     const filePath = path.join(chatsPath, fullFileName);
     
     console.log('[DEBUG] Saving chat to:', filePath);
@@ -877,7 +919,7 @@ ipcMain.handle('fs:saveChatToFile', async (event, workspacePath, fileName, conte
       success: true, 
       filePath: filePath,
       fileName: fullFileName,
-      relativePath: path.join('chats', fullFileName)
+      relativePath: path.join(safeRelativeDir, fullFileName)
     };
   } catch (error) {
     console.error('Error saving chat file:', error);
@@ -886,9 +928,10 @@ ipcMain.handle('fs:saveChatToFile', async (event, workspacePath, fileName, conte
 });
 
 // Handler para listar archivos de chat existentes
-ipcMain.handle('fs:listChatFiles', async (event, workspacePath) => {
+ipcMain.handle('fs:listChatFiles', async (event, workspacePath, relativeDir = 'chats') => {
   try {
-    const chatsPath = path.join(workspacePath, 'chats');
+    const safeRelativeDir = sanitizeRelativeDirectory(relativeDir);
+    const chatsPath = path.join(workspacePath, safeRelativeDir);
     
     // Verificar si la carpeta existe
     try {
@@ -903,7 +946,7 @@ ipcMain.handle('fs:listChatFiles', async (event, workspacePath) => {
       .map(file => ({
         name: file,
         path: path.join(chatsPath, file),
-        relativePath: path.join('chats', file)
+        relativePath: path.join(safeRelativeDir, file)
       }))
       .sort((a, b) => b.name.localeCompare(a.name)); // Ordenar por fecha (más reciente primero)
     

@@ -82,6 +82,26 @@ const gatherRelatedPaths = (activeFile: string, files: Record<string, FileItem>,
   return prioritized.slice(0, RELATED_FILES_LIMIT)
 }
 
+const sanitizeRelativeDirectory = (dir?: string): string => {
+  if (!dir) {
+    return "chats"
+  }
+
+  const normalized = dir
+    .trim()
+    .replace(/^(?:\.\/)+/, "")
+    .replace(/^\/+/, "")
+    .replace(/^\\+/, "")
+    .replace(/\\/g, "/")
+
+  const segments = normalized
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0 && segment !== "." && segment !== "..")
+
+  return segments.length > 0 ? segments.join("/") : "chats"
+}
+
 interface ContextBundleParams {
   activeFile: string
   files: Record<string, FileItem>
@@ -188,11 +208,12 @@ interface AICommandBarProps {
   onCreateFile: (filePath: string, content: string) => void
   aiProvider?: AIProvider
   chatFileName?: string
+  chatDirectory?: string
   onSelectFile?: (filePath: string) => void
   fileContextIndex: FileContextIndex
 }
 
-export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, aiProvider, chatFileName = "chat.md", onSelectFile, fileContextIndex }: AICommandBarProps) {
+export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, aiProvider, chatFileName = "chat.md", chatDirectory = "chats", onSelectFile, fileContextIndex }: AICommandBarProps) {
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [chatHistory, setChatHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([])
@@ -205,6 +226,11 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
     const userMessage = input.trim()
     setInput("")
     setIsLoading(true)
+
+  const chatFileNameClean = (chatFileName || "chat.md").trim() || "chat.md"
+  const chatDirectoryClean = sanitizeRelativeDirectory(chatDirectory)
+  const chatFilePath = `${chatDirectoryClean}/${chatFileNameClean}`
+  const defaultChatContent = "# AI Chat History\n\n"
 
     try {
       // Check if user has selected text
@@ -304,10 +330,8 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
         
         console.log(`Applied ${isFixCommand ? 'fix' : 'refactor'} to selected code in ${activeFile}`)
         
-        // Also save to chat file for history
-        const chatFileName_clean = (chatFileName || "chat.md").trim() || "chat.md"
-        const chatFilePath = `chats/${chatFileName_clean}`
-        const currentChatContent = files[chatFilePath]?.content || "# AI Chat History\n\n"
+  // Also save to chat file for history
+  const currentChatContent = files[chatFilePath]?.content || defaultChatContent
         
         const updatedChatContent = currentChatContent + 
           `\n## User\n${userMessage}\n\n## AI Assistant\n${isFixCommand ? 'Fixed' : 'Refactored'} code in ${activeFile}\n\n\`\`\`\n${codeToApply}\n\`\`\`\n`
@@ -331,10 +355,8 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
         
         console.log(`Inserted AI response as comments in ${activeFile}`)
         
-        // Also save to chat file for history
-        const chatFileName_clean = (chatFileName || "chat.md").trim() || "chat.md"
-        const chatFilePath = `chats/${chatFileName_clean}`
-        const currentChatContent = files[chatFilePath]?.content || "# AI Chat History\n\n"
+  // Also save to chat file for history
+  const currentChatContent = files[chatFilePath]?.content || defaultChatContent
         
         const updatedChatContent = currentChatContent + 
           `\n## User\n${userMessage}\n\n## AI Assistant\nInserted as comments in ${activeFile}:\n\n${aiResponse.message}\n`
@@ -346,9 +368,7 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
         }
       } else {
         // Default behavior - save to chat file (even with selection)
-        const chatFileName_clean = (chatFileName || "chat.md").trim() || "chat.md"
-        const chatFilePath = `chats/${chatFileName_clean}`
-        const currentChatContent = files[chatFilePath]?.content || "# AI Chat History\n\n"
+  const currentChatContent = files[chatFilePath]?.content || defaultChatContent
         
         // Add user message and AI response to chat file
         const updatedChatContent = currentChatContent + 
@@ -388,10 +408,8 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
         console.error('Error al guardar el chat con error:', saveError)
       }
 
-      // Update chat file with error (create if not exists)
-      const chatFileName_clean = (chatFileName || "chat.md").trim() || "chat.md"
-      const chatFilePath = `chats/${chatFileName_clean}`
-      const currentContent = files[chatFilePath]?.content || "# AI Chat History\n\n"
+  // Update chat file with error (create if not exists)
+  const currentContent = files[chatFilePath]?.content || defaultChatContent
       const errorContent = currentContent + `\n## User\n${userMessage}\n\n## AI Assistant\n${errorMessage}\n`
       if (!files[chatFilePath]) {
         onCreateFile(chatFilePath, errorContent)
