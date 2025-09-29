@@ -135,6 +135,27 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const executeCommand = useCallback(async (command: string, terminalId: string) => {
     if (!command.trim()) return
 
+    const trimmedCommand = command.trim()
+
+    // Comando especial: clear
+    if (trimmedCommand === 'clear') {
+      setTerminals(prev => prev.map(term => {
+        if (term.id === terminalId) {
+          return {
+            ...term,
+            output: [`$ cd ${term.cwd}`, ''], // Reset to initial state
+            commandHistory: [...term.commandHistory, trimmedCommand],
+            historyIndex: term.commandHistory.length + 1,
+            isExecuting: false
+          }
+        }
+        return term
+      }))
+      setCurrentCommand("")
+      setTimeout(() => inputRef.current?.focus(), 0)
+      return
+    }
+
     setTerminals(prev => prev.map(term =>
       term.id === terminalId
         ? { ...term, isExecuting: true }

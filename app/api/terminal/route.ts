@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { spawn } from 'child_process'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+
+const execAsync = promisify(exec)
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,45 +12,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Command is required' }, { status: 400 })
     }
 
-    // Ejecutar el comando en un proceso hijo
-    const child = spawn(command, {
-      shell: true,
+    // Ejecutar el comando usando exec para compatibilidad cross-platform
+    const execOptions = {
       cwd: cwd || process.cwd(),
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+      maxBuffer: 1024 * 1024, // 1MB buffer
+    }
 
-    let stdout = ''
-    let stderr = ''
+    try {
+      const { stdout, stderr } = await execAsync(command, execOptions)
 
-    // Recopilar output
-    child.stdout.on('data', (data) => {
-      stdout += data.toString()
-    })
-
-    child.stderr.on('data', (data) => {
-      stderr += data.toString()
-    })
-
-    // Retornar una respuesta que indique que el comando se está ejecutando
-    return new Promise((resolve) => {
-      child.on('close', (code) => {
-        resolve(NextResponse.json({
-          success: true,
-          output: stdout,
-          error: stderr,
-          exitCode: code,
-          terminalId
-        }))
+      return NextResponse.json({
+        success: true,
+        output: stdout,
+        error: stderr,
+        exitCode: 0,
+        terminalId
       })
-
-      child.on('error', (error) => {
-        resolve(NextResponse.json({
-          success: false,
-          error: error.message,
-          terminalId
-        }, { status: 500 }))
+    } catch (execError: any) {
+      // exec lanza error cuando el comando falla
+      return NextResponse.json({
+        success: true, // El comando se ejecutó, solo falló
+        output: execError.stdout || '',
+        error: execError.stderr || execError.message,
+        exitCode: execError.code || 1,
+        terminalId
       })
-    })
+    }
 
   } catch (error) {
     console.error('Terminal API error:', error)

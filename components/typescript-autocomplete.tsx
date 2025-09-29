@@ -99,20 +99,14 @@ export function TypeScriptAutocomplete({
           event.preventDefault()
           onSelectIndex(selectedIndex === 0 ? validSuggestions.length - 1 : selectedIndex - 1)
           break
-        case 'Escape':
-          event.preventDefault()
-          if (validSuggestions[selectedIndex]) {
-            onSelect(validSuggestions[selectedIndex])
-          }
-          break
 
-        // Removido: Tab ya no selecciona, solo Escape
+        // Removido: Tab y Escape ya no seleccionan
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isVisible, validSuggestions, selectedIndex, onSelect, onSelectIndex, onClose])
+  }, [isVisible, validSuggestions, selectedIndex, onSelect, onSelectIndex])
 
   if (!isVisible || validSuggestions.length === 0) {
     return null
@@ -206,7 +200,6 @@ export function TypeScriptAutocomplete({
             <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
             {validSuggestions.length} sugerencias disponibles
           </span>
-          <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">ESC para seleccionar</span>
         </div>
       </div>
 

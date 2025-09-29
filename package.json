@@ -1,5 +1,5 @@
 {
-  "name": "code-editor",
+  "name": "code",
   "version": "0.1.0",
   "private": true,
   "main": "main.js",
@@ -104,8 +104,8 @@
     "wait-on": "^9.0.1"
   },
   "build": {
-    "appId": "com.example.codeeditor",
-    "productName": "Code Editor",
+    "appId": "com.davmoren.code",
+    "productName": "Code",
     "files": [
       "out/**/*",
       "main.js",

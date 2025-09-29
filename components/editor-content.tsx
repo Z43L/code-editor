@@ -611,7 +611,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
         setAutocompleteSuggestions(suggestions);
         setAutocompletePosition(position);
         setSelectedSuggestionIndex(0);
-        setShowAutocomplete(true);
+        setShowAutocomplete(false);
       } else {
         setShowAutocomplete(false);
       }
