@@ -1,5 +1,5 @@
 # En busca de un nuevo proyecto....
-// $$ programa itoa en c$$
+
 ## en un lugar uy legano de la galaxya....
 
 este es un proyecto simple de un editor de codigo

@@ -5,6 +5,7 @@ import { FileTree, DEFAULT_EDITOR_SETTINGS } from "./file-tree"
 import type { EditorSettings } from "./file-tree"
 import EditorContent from "./editor-content"
 import { AICommandBar } from "./ai-command-bar"
+import { TerminalPanel } from "./terminal-panel"
 import { useElectron } from "../hooks/use-electron"
 import { chatService } from "../lib/chat-service"
 import type { AIProvider, FileContextSnapshot } from "../lib/ai-service"
@@ -90,6 +91,8 @@ export function FlutterEditor() {
   const [isResizing, setIsResizing] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [workspacePath, setWorkspacePath] = useState<string>("")
+  const [isTerminalExpanded, setIsTerminalExpanded] = useState(false)
+  const [terminalCollapsed, setTerminalCollapsed] = useState(true)
   const sidebarRef = useRef<HTMLDivElement>(null)
 
   const handleEditorSettingsChange = useCallback((settings: EditorSettings) => {
@@ -631,6 +634,30 @@ export function FlutterEditor() {
             projectContext={fileContextIndex}
             aiProvider={aiProvider}
           />
+        </div>
+
+        {/* Terminal Panel */}
+        <div 
+          className="bg-[#252526] flex flex-col relative transition-all duration-200 border-l border-[#3e3e3e]"
+          style={{ width: terminalCollapsed ? 32 : 400 }}
+        >
+          <div className="p-2 text-xs text-gray-300 uppercase tracking-wide bg-[#2d2d30] flex items-center justify-between">
+            {!terminalCollapsed && <span>Terminal</span>}
+            <button
+              onClick={() => setTerminalCollapsed(!terminalCollapsed)}
+              className="text-gray-400 hover:text-white text-xs"
+              title={terminalCollapsed ? "Mostrar terminal" : "Ocultar terminal"}
+            >
+              {terminalCollapsed ? "←" : "→"}
+            </button>
+          </div>
+          <div className={`flex-1 overflow-hidden ${terminalCollapsed ? 'hidden' : 'block'}`}>
+            <TerminalPanel
+              isExpanded={isTerminalExpanded}
+              onToggle={() => setIsTerminalExpanded(!isTerminalExpanded)}
+              workingDirectory={workspacePath}
+            />
+          </div>
         </div>
       </div>
 
