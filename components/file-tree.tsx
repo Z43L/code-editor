@@ -16,6 +16,8 @@ interface EditorSettings {
   chatFileName: string
   chatDirectory: string
   autosave: boolean
+  aiHover: boolean
+  hover: boolean
 }
 
 type BooleanEditorSetting =
@@ -25,6 +27,8 @@ type BooleanEditorSetting =
   | 'autoResponses'
   | 'codeSuggestions'
   | 'autosave'
+  | 'aiHover'
+  | 'hover'
 
 export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   lineNumbers: true,
@@ -35,6 +39,8 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   chatFileName: "chat.md",
   chatDirectory: "chats",
   autosave: true,
+  aiHover: false,
+  hover: true,
 }
 
 export type { EditorSettings }
@@ -2302,6 +2308,24 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     className="rounded"
                   />
                   Autoguardado
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={currentSettings.aiHover}
+                    onChange={() => handleSettingChange('aiHover')}
+                    className="rounded"
+                  />
+                  AI Hover automático
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={currentSettings.hover}
+                    onChange={() => handleSettingChange('hover')}
+                    className="rounded"
+                  />
+                  Hover (LSP)
                 </label>
               </div>
             </div>

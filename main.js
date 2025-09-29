@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const ts = require('typescript');
 
 const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production' && process.defaultApp;
 
@@ -983,5 +984,197 @@ ipcMain.handle('fs:readChatFile', async (event, filePath) => {
   } catch (error) {
     console.error('Error reading chat file:', filePath, error);
     return { success: false, error: error.message };
+  }
+});
+
+// TypeScript Language Service setup
+// Un mapa para mantener el contenido de los archivos que el usuario edita
+const tsFiles = new Map();
+
+const languageServiceHost = {
+  getScriptFileNames: () => Array.from(tsFiles.keys()),
+  getScriptVersion: (fileName) => tsFiles.get(fileName)?.version.toString() || '0',
+  getScriptSnapshot: (fileName) => {
+    const file = tsFiles.get(fileName);
+    if (!file) return undefined;
+    return ts.ScriptSnapshot.fromString(file.text);
+  },
+  getCurrentDirectory: () => process.cwd(),
+  getCompilationSettings: () => ts.getDefaultCompilerOptions(), // O tu tsconfig.json
+  getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
+};
+
+const languageService = ts.createLanguageService(languageServiceHost, ts.createDocumentRegistry());
+
+// Función para actualizar el contenido del archivo desde la UI
+function updateTsFile(fileName, newText) {
+  const version = (tsFiles.get(fileName)?.version || 0) + 1;
+  tsFiles.set(fileName, { text: newText, version });
+}
+
+// IPC handler para actualizar archivos TypeScript
+ipcMain.handle('ts:updateFile', async (event, fileName, content) => {
+  try {
+    updateTsFile(fileName, content);
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating TypeScript file:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC handler para obtener completions de TypeScript
+ipcMain.handle('ts:getCompletions', async (event, fileName, position, options = {}) => {
+  try {
+    const completions = languageService.getCompletionsAtPosition(fileName, position, options);
+    return { success: true, completions };
+  } catch (error) {
+    console.error('Error getting TypeScript completions:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC handler para obtener quick info (hover)
+ipcMain.handle('ts:getQuickInfo', async (event, fileName, position) => {
+  try {
+    const quickInfo = languageService.getQuickInfoAtPosition(fileName, position);
+    return { success: true, quickInfo };
+  } catch (error) {
+    console.error('Error getting TypeScript quick info:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC handler para obtener errores de TypeScript
+ipcMain.handle('ts:getDiagnostics', async (event, fileName) => {
+  try {
+    const syntacticDiagnostics = languageService.getSyntacticDiagnostics(fileName);
+    const semanticDiagnostics = languageService.getSemanticDiagnostics(fileName);
+
+    const allDiagnostics = [...syntacticDiagnostics, ...semanticDiagnostics];
+
+    const errors = allDiagnostics.map(diagnostic => ({
+      file: diagnostic.file?.fileName,
+      start: diagnostic.start,
+      length: diagnostic.length,
+      message: diagnostic.messageText,
+      category: diagnostic.category,
+      code: diagnostic.code,
+      line: diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start || 0).line,
+      character: diagnostic.file?.getLineAndCharacterOfPosition(diagnostic.start || 0).character
+    }));
+
+    return { success: true, errors };
+  } catch (error) {
+    console.error('Error getting TypeScript diagnostics:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC handler para ir a definición
+ipcMain.handle('ts:getDefinition', async (event, fileName, position) => {
+  try {
+    const definitions = languageService.getDefinitionAtPosition(fileName, position);
+
+    if (definitions && definitions.length > 0) {
+      const definition = definitions[0];
+      return {
+        success: true,
+        definition: {
+          fileName: definition.fileName,
+          textSpan: {
+            start: definition.textSpan.start,
+            length: definition.textSpan.length
+          },
+          line: definition.file.getLineAndCharacterOfPosition(definition.textSpan.start).line,
+          character: definition.file.getLineAndCharacterOfPosition(definition.textSpan.start).character
+        }
+      };
+    }
+
+    return { success: true, definition: null };
+  } catch (error) {
+    console.error('Error getting TypeScript definition:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC handler para obtener ayuda de firma
+ipcMain.handle('ts:getSignatureHelp', async (event, fileName, position) => {
+  try {
+    const signatureHelp = languageService.getSignatureHelpItems(fileName, position);
+
+    if (signatureHelp) {
+      return {
+        success: true,
+        signatureHelp: {
+          items: signatureHelp.items.map(item => ({
+            isVariadic: item.isVariadic,
+            prefixDisplayParts: item.prefixDisplayParts,
+            suffixDisplayParts: item.suffixDisplayParts,
+            separatorDisplayParts: item.separatorDisplayParts,
+            parameters: item.parameters.map(param => ({
+              name: param.name,
+              documentation: param.documentation,
+              displayParts: param.displayParts,
+              isOptional: param.isOptional
+            })),
+            documentation: item.documentation,
+            tags: item.tags
+          })),
+          applicableSpan: signatureHelp.applicableSpan,
+          selectedItemIndex: signatureHelp.selectedItemIndex,
+          argumentIndex: signatureHelp.argumentIndex,
+          argumentCount: signatureHelp.argumentCount
+        }
+      };
+    }
+
+    return { success: true, signatureHelp: null };
+  } catch (error) {
+    console.error('Error getting TypeScript signature help:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC handler para obtener correcciones rápidas
+ipcMain.handle('ts:getQuickFixes', async (event, fileName, start, length) => {
+  try {
+    const textRange = { pos: start, end: start + length };
+    const fixes = languageService.getCodeFixesAtPosition(fileName, start, start + length, [], {}, {});
+
+    return {
+      success: true,
+      fixes: fixes.map(fix => ({
+        description: fix.description,
+        changes: fix.changes.map(change => ({
+          fileName: change.fileName,
+          textChanges: change.textChanges.map(tc => ({
+            span: { start: tc.span.start, length: tc.span.length },
+            newText: tc.newText
+          }))
+        }))
+      }))
+    };
+  } catch (error) {
+    console.error('Error getting TypeScript quick fixes:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Listener IPC para obtener sugerencias de autocompletado
+ipcMain.on('get-suggestions', (event, { fileName, code, position }) => {
+  try {
+    // 1. Actualiza el contenido del archivo en el host
+    updateTsFile(fileName, code);
+
+    // 2. Pide las sugerencias al Language Service
+    const completions = languageService.getCompletionsAtPosition(fileName, position, undefined);
+
+    // 3. Envía el resultado de vuelta a la UI
+    event.reply('suggestions-result', completions?.entries || []);
+  } catch (error) {
+    console.error('Error getting TypeScript suggestions:', error);
+    event.reply('suggestions-result', []);
   }
 });

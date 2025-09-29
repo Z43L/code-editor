@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ errors: [{ line: 1, message: 'Error al analizar el código: ' + (err as Error).message }] });
     }
   } catch (error) {
-    console.error('API error:', error);
+    console.error('Error en API:', error);
     return NextResponse.json({ errors: [] }, { status: 500 });
   }
 }

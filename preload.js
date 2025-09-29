@@ -96,6 +96,82 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return result;
   },
   
+  // TypeScript Language Service APIs
+  updateTsFile: async (fileName, content) => {
+    console.log('🔄 [PRELOAD] Updating TypeScript file:', fileName);
+    const result = await ipcRenderer.invoke('ts:updateFile', fileName, content);
+    console.log('📦 [PRELOAD] TypeScript file update:', result.success ? 'SUCCESS' : 'FAILED');
+    return result;
+  },
+  
+  getTsCompletions: async (fileName, position, options = {}) => {
+    console.log('💡 [PRELOAD] Getting TypeScript completions for:', fileName, 'at position:', position);
+    const result = await ipcRenderer.invoke('ts:getCompletions', fileName, position, options);
+    console.log('📦 [PRELOAD] Completions received:', result.success ? `${result.completions?.entries?.length || 0} items` : 'FAILED');
+    return result;
+  },
+  
+  getTsQuickInfo: async (fileName, position) => {
+    console.log('ℹ️ [PRELOAD] Getting TypeScript quick info for:', fileName, 'at position:', position);
+    const result = await ipcRenderer.invoke('ts:getQuickInfo', fileName, position);
+    console.log('📦 [PRELOAD] Quick info received:', result.success ? 'SUCCESS' : 'FAILED');
+    return result;
+  },
+  
+  getTsDiagnostics: async (fileName) => {
+    console.log('🔍 [PRELOAD] Getting TypeScript diagnostics for:', fileName);
+    const result = await ipcRenderer.invoke('ts:getDiagnostics', fileName);
+    console.log('📦 [PRELOAD] Diagnostics received:', result.success ? `${result.errors?.length || 0} errors` : 'FAILED');
+    return result;
+  },
+  
+  getTsDefinition: async (fileName, position) => {
+    console.log('🎯 [PRELOAD] Getting TypeScript definition for:', fileName, 'at position:', position);
+    const result = await ipcRenderer.invoke('ts:getDefinition', fileName, position);
+    console.log('📦 [PRELOAD] Definition received:', result.success ? (result.definition ? 'FOUND' : 'NOT FOUND') : 'FAILED');
+    return result;
+  },
+  
+  getTsSignatureHelp: async (fileName, position) => {
+    console.log('📝 [PRELOAD] Getting TypeScript signature help for:', fileName, 'at position:', position);
+    const result = await ipcRenderer.invoke('ts:getSignatureHelp', fileName, position);
+    console.log('📦 [PRELOAD] Signature help received:', result.success ? (result.signatureHelp ? 'FOUND' : 'NOT FOUND') : 'FAILED');
+    return result;
+  },
+  
+  getTsQuickFixes: async (fileName, start, length) => {
+    console.log('🔧 [PRELOAD] Getting TypeScript quick fixes for:', fileName, 'at', start, 'length:', length);
+    const result = await ipcRenderer.invoke('ts:getQuickFixes', fileName, start, length);
+    console.log('📦 [PRELOAD] Quick fixes received:', result.success ? `${result.fixes?.length || 0} fixes` : 'FAILED');
+    return result;
+  },
+  
+  // Función para obtener sugerencias usando el listener IPC
+  getSuggestions: (fileName, code, position) => {
+    return new Promise((resolve) => {
+      console.log('💡 [PRELOAD] Requesting suggestions for:', fileName, 'at position:', position);
+      
+      // Escuchar la respuesta
+      const handleSuggestionsResult = (event, suggestions) => {
+        console.log('📦 [PRELOAD] Suggestions received:', suggestions?.length || 0, 'items');
+        ipcRenderer.removeListener('suggestions-result', handleSuggestionsResult);
+        resolve(suggestions || []);
+      };
+      
+      ipcRenderer.on('suggestions-result', handleSuggestionsResult);
+      
+      // Enviar la solicitud
+      ipcRenderer.send('get-suggestions', { fileName, code, position });
+      
+      // Timeout de seguridad (5 segundos)
+      setTimeout(() => {
+        ipcRenderer.removeListener('suggestions-result', handleSuggestionsResult);
+        console.log('⏰ [PRELOAD] Suggestions timeout');
+        resolve([]);
+      }, 5000);
+    });
+  },
+  
   testPing: () => ipcRenderer.invoke('test:ping'),
   
   // App information

@@ -57,8 +57,22 @@ export interface FileModification {
 class AIService {
   private provider: AIProvider;
 
-  constructor(provider: AIProvider = { type: 'local', baseUrl: 'http://localhost:8080' }) {
-    this.provider = provider;
+  constructor(provider?: AIProvider) {
+    // Intentar cargar desde localStorage si estamos en el navegador
+    if (typeof window !== 'undefined') {
+      try {
+        const savedProvider = localStorage.getItem('aiProvider');
+        if (savedProvider) {
+          this.provider = JSON.parse(savedProvider);
+          return;
+        }
+      } catch (error) {
+        console.warn('Error loading AI provider from localStorage:', error);
+      }
+    }
+
+    // Usar provider por defecto si no hay configuración guardada o estamos en servidor
+    this.provider = provider || { type: 'local', baseUrl: 'http://localhost:8080' };
   }
 
   setProvider(provider: AIProvider) {

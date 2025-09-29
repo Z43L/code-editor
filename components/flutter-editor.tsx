@@ -8,6 +8,7 @@ import { AICommandBar } from "./ai-command-bar"
 import { useElectron } from "../hooks/use-electron"
 import { chatService } from "../lib/chat-service"
 import type { AIProvider, FileContextSnapshot } from "../lib/ai-service"
+import { AIHoverProvider } from "./ai-hover-provider"
 
 export interface FileItem {
   name: string
@@ -82,8 +83,8 @@ export function FlutterEditor() {
   const [editorSettings, setEditorSettings] = useState<EditorSettings>({ ...DEFAULT_EDITOR_SETTINGS })
   const [aiProvider, setAiProvider] = useState<AIProvider>({
     type: 'openrouter',
-    apiKey: '',
-    model: 'anthropic/claude-3.5-sonnet'
+    apiKey: process.env.OPENROUTER_API_KEY || '',
+    model: process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-sonnet'
   })
   const [sidebarWidth, setSidebarWidth] = useState(256)
   const [isResizing, setIsResizing] = useState(false)
@@ -104,10 +105,38 @@ export function FlutterEditor() {
     })
   }, [])
 
+  // Función para actualizar configuración de IA
+  const updateAIConfig = useCallback(async (newProvider: AIProvider) => {
+    try {
+      // Enviar configuración al backend
+      const response = await fetch('/api/config/ai', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ provider: newProvider }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Error actualizando configuración en el backend');
+      }
+
+      // Actualizar estado local
+      setAiProvider(newProvider);
+
+      // Guardar en localStorage para persistencia
+      localStorage.setItem('aiProvider', JSON.stringify(newProvider));
+
+      console.log('✅ Configuración de IA actualizada:', newProvider);
+    } catch (error) {
+      console.error('❌ Error actualizando configuración de IA:', error);
+    }
+  }, [])
+
   // Detectar si estamos en Electron de manera segura para SSR
   const { isElectron, isHydrated } = useElectron()
 
-  // Cargar configuración guardada desde localStorage
+    // Cargar configuración guardada desde localStorage y backend
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -115,6 +144,8 @@ export function FlutterEditor() {
         if (savedAiProvider) {
           const parsedProvider = JSON.parse(savedAiProvider)
           setAiProvider(parsedProvider)
+          // También enviar al backend para asegurar consistencia
+          updateAIConfig(parsedProvider).catch(console.error)
         }
 
         const savedEditorSettings = localStorage.getItem('editorSettings')
@@ -133,7 +164,7 @@ export function FlutterEditor() {
         console.error('Error loading saved configuration:', error)
       }
     }
-  }, [])
+  }, [updateAIConfig])
 
   // Configurar el servicio de chat cuando cambie el directorio de trabajo
   useEffect(() => {
@@ -509,7 +540,8 @@ export function FlutterEditor() {
   }, [isResizing, handleMouseMove, handleMouseUp])
 
   return (
-    <div className={`h-screen bg-[#1e1e1e] text-white flex flex-col font-mono text-sm hw-accelerated reduce-repaints interactive-layer ${isHydrated && isElectron ? 'electron-app' : ''}`}>
+    <AIHoverProvider>
+      <div className={`h-screen bg-[#1e1e1e] text-white flex flex-col font-mono text-sm hw-accelerated reduce-repaints interactive-layer ${isHydrated && isElectron ? 'electron-app' : ''}`}>
       {/* Tab Bar */}
       <div className="bg-[#2d2d30] flex items-center px-2 h-9">
         <div className="flex items-center gap-1">
@@ -571,7 +603,7 @@ export function FlutterEditor() {
               editorSettings={editorSettings}
               onSettingsChange={handleEditorSettingsChange}
               aiProvider={aiProvider}
-              onAiProviderChange={setAiProvider}
+              onAiProviderChange={updateAIConfig}
               onWorkspacePathChange={setWorkspacePath}
               onContextMetadata={handleContextMetadata}
             />
@@ -596,6 +628,8 @@ export function FlutterEditor() {
             settings={editorSettings}
             onSaveFile={saveFile}
             onSaveAllFiles={saveAllFiles}
+            projectContext={fileContextIndex}
+            aiProvider={aiProvider}
           />
         </div>
       </div>
@@ -613,5 +647,6 @@ export function FlutterEditor() {
         fileContextIndex={fileContextIndex}
       />
     </div>
+    </AIHoverProvider>
   )
 }
