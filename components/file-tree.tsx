@@ -2309,24 +2309,6 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                   />
                   Autoguardado
                 </label>
-                <label className="flex items-center gap-2 text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={currentSettings.aiHover}
-                    onChange={() => handleSettingChange('aiHover')}
-                    className="rounded"
-                  />
-                  AI Hover automático
-                </label>
-                <label className="flex items-center gap-2 text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={currentSettings.hover}
-                    onChange={() => handleSettingChange('hover')}
-                    className="rounded"
-                  />
-                  Hover (LSP)
-                </label>
               </div>
             </div>
 
