@@ -1,6 +1,8 @@
 {
   "name": "code",
   "version": "0.1.0",
+  "description": "A modern code editor with AI-powered features",
+  "author": "David Moreno",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -76,6 +78,7 @@
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5",
     "vaul": "^0.9.9",
     "vscode-langservers-extracted": "^4.10.0",
     "zod": "3.25.67"
@@ -100,17 +103,25 @@
     "tailwindcss": "^4.1.9",
     "ts-jest": "^29.4.4",
     "tw-animate-css": "1.3.3",
-    "typescript": "^5",
     "wait-on": "^9.0.1"
   },
   "build": {
     "appId": "com.davmoren.code",
     "productName": "Code",
     "files": [
+      ".next/**/*",
       "out/**/*",
       "main.js",
       "preload.js",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/next/**/*",
+      "node_modules/react/**/*",
+      "node_modules/react-dom/**/*",
+      "node_modules/typescript/**/*",
+      "node_modules/vscode-langservers-extracted/**/*",
+      "node_modules/pyright/**/*"
     ],
     "directories": {
       "output": "dist",
@@ -190,7 +201,20 @@
         }
       ],
       "icon": "build/icon.png",
-      "category": "Development"
+      "category": "Development",
+      "maintainer": "davmoren",
+      "synopsis": "Modern Code Editor",
+      "description": "A modern code editor with AI capabilities",
+      "desktop": {
+        "entry": {
+          "Name": "Code Editor",
+          "Comment": "Modern code editor with AI capabilities",
+          "Categories": "Development;IDE;TextEditor;",
+          "Terminal": "false",
+          "Type": "Application",
+          "StartupNotify": "true"
+        }
+      }
     },
     "nsis": {
       "oneClick": false,
