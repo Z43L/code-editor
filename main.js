@@ -2,7 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const ts = require('typescript');
+
+// Try to load TypeScript, but don't fail if it's not available
+let ts;
+try {
+  ts = require('typescript');
+} catch (err) {
+  console.warn('TypeScript module not available:', err.message);
+  ts = null;
+}
 
 const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production' && process.defaultApp;
 
@@ -142,45 +150,54 @@ app.whenReady().then(() => {
 
   // En producción, iniciar servidor Next.js antes de crear la ventana
   if (!isDev) {
-    const next = require('next');
-    const { parse } = require('url');
-    
-    const nextApp = next({ dev: false, dir: __dirname });
-    const handle = nextApp.getRequestHandler();
-    
-    nextApp.prepare().then(() => {
-      const { createServer } = require('http');
-      const server = createServer((req, res) => {
-        const parsedUrl = parse(req.url, true);
-        handle(req, res, parsedUrl);
-      });
-      
-      server.listen(3000, (err) => {
-        if (err) {
-          console.error('[MAIN] Error starting Next.js server:', err);
-          // Crear ventana con mensaje de error
+    try {
+      const next = require('next');
+      const { parse } = require('url');
+
+      const nextApp = next({ dev: false, dir: __dirname });
+      const handle = nextApp.getRequestHandler();
+
+      nextApp.prepare().then(() => {
+        const { createServer } = require('http');
+        const server = createServer((req, res) => {
+          const parsedUrl = parse(req.url, true);
+          handle(req, res, parsedUrl);
+        });
+
+        server.listen(3000, (err) => {
+          if (err) {
+            console.error('[MAIN] Error starting Next.js server:', err);
+            // Crear ventana con mensaje de error
+            createWindow();
+            if (mainWindow) {
+              mainWindow.loadURL(`data:text/html,<html><body><h1>Error: No se pudo cargar la aplicación</h1><p>Error al iniciar el servidor: ${err.message}</p></body></html>`);
+            }
+            return;
+          }
+          console.log('[MAIN] Next.js server ready on http://localhost:3000');
+
+          // Ahora crear la ventana y cargar la URL
           createWindow();
           if (mainWindow) {
-            mainWindow.loadURL(`data:text/html,<html><body><h1>Error: No se pudo cargar la aplicación</h1><p>Error al iniciar el servidor: ${err.message}</p></body></html>`);
+            mainWindow.loadURL('http://localhost:3000');
           }
-          return;
-        }
-        console.log('[MAIN] Next.js server ready on http://localhost:3000');
-        
-        // Ahora crear la ventana y cargar la URL
+        });
+      }).catch((err) => {
+        console.error('[MAIN] Error preparing Next.js app:', err);
+        // Crear ventana con mensaje de error
         createWindow();
         if (mainWindow) {
-          mainWindow.loadURL('http://localhost:3000');
+          mainWindow.loadURL(`data:text/html,<html><body><h1>Error: No se pudo cargar la aplicación</h1><p>Error al preparar la aplicación: ${err.message}</p></body></html>`);
         }
       });
-    }).catch((err) => {
-      console.error('[MAIN] Error preparing Next.js app:', err);
-      // Crear ventana con mensaje de error
+    } catch (err) {
+      console.error('[MAIN] Next.js not available, cannot start server:', err.message);
+      // Show error to user
       createWindow();
       if (mainWindow) {
-        mainWindow.loadURL(`data:text/html,<html><body><h1>Error: No se pudo cargar la aplicación</h1><p>Error al preparar la aplicación: ${err.message}</p></body></html>`);
+        mainWindow.loadURL(`data:text/html,<html><body><h1>Error: Next.js not available</h1><p>The application requires Next.js to run in production mode. Please rebuild the application with all dependencies included.</p><p>Error: ${err.message}</p></body></html>`);
       }
-    });
+    }
   } else {
     // En desarrollo, crear la ventana directamente
     createWindow();
@@ -949,20 +966,29 @@ ipcMain.handle('fs:readChatFile', async (event, filePath) => {
 // Un mapa para mantener el contenido de los archivos que el usuario edita
 const tsFiles = new Map();
 
-const languageServiceHost = {
-  getScriptFileNames: () => Array.from(tsFiles.keys()),
-  getScriptVersion: (fileName) => tsFiles.get(fileName)?.version.toString() || '0',
-  getScriptSnapshot: (fileName) => {
-    const file = tsFiles.get(fileName);
-    if (!file) return undefined;
-    return ts.ScriptSnapshot.fromString(file.text);
-  },
-  getCurrentDirectory: () => process.cwd(),
-  getCompilationSettings: () => ts.getDefaultCompilerOptions(), // O tu tsconfig.json
-  getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
-};
+let languageService = null;
+let languageServiceHost = null;
 
-const languageService = ts.createLanguageService(languageServiceHost, ts.createDocumentRegistry());
+// Only setup TypeScript language service if TypeScript is available
+if (ts) {
+  languageServiceHost = {
+    getScriptFileNames: () => Array.from(tsFiles.keys()),
+    getScriptVersion: (fileName) => tsFiles.get(fileName)?.version.toString() || '0',
+    getScriptSnapshot: (fileName) => {
+      const file = tsFiles.get(fileName);
+      if (!file) return undefined;
+      return ts.ScriptSnapshot.fromString(file.text);
+    },
+    getCurrentDirectory: () => process.cwd(),
+    getCompilationSettings: () => ts.getDefaultCompilerOptions(), // O tu tsconfig.json
+    getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
+  };
+
+  languageService = ts.createLanguageService(languageServiceHost, ts.createDocumentRegistry());
+  console.log('[MAIN] TypeScript language service initialized successfully');
+} else {
+  console.warn('[MAIN] TypeScript language service not available - TypeScript features will be disabled');
+}
 
 // Función para actualizar el contenido del archivo desde la UI
 function updateTsFile(fileName, newText) {
@@ -972,6 +998,9 @@ function updateTsFile(fileName, newText) {
 
 // IPC handler para actualizar archivos TypeScript
 ipcMain.handle('ts:updateFile', async (event, fileName, content) => {
+  if (!languageService) {
+    return { success: false, error: 'TypeScript language service not available' };
+  }
   try {
     updateTsFile(fileName, content);
     return { success: true };
@@ -983,6 +1012,9 @@ ipcMain.handle('ts:updateFile', async (event, fileName, content) => {
 
 // IPC handler para obtener completions de TypeScript
 ipcMain.handle('ts:getCompletions', async (event, fileName, position, options = {}) => {
+  if (!languageService) {
+    return { success: false, error: 'TypeScript language service not available' };
+  }
   try {
     const completions = languageService.getCompletionsAtPosition(fileName, position, options);
     return { success: true, completions };
@@ -994,6 +1026,9 @@ ipcMain.handle('ts:getCompletions', async (event, fileName, position, options = 
 
 // IPC handler para obtener quick info (hover)
 ipcMain.handle('ts:getQuickInfo', async (event, fileName, position) => {
+  if (!languageService) {
+    return { success: false, error: 'TypeScript language service not available' };
+  }
   try {
     const quickInfo = languageService.getQuickInfoAtPosition(fileName, position);
     return { success: true, quickInfo };
@@ -1005,6 +1040,9 @@ ipcMain.handle('ts:getQuickInfo', async (event, fileName, position) => {
 
 // IPC handler para obtener errores de TypeScript
 ipcMain.handle('ts:getDiagnostics', async (event, fileName) => {
+  if (!languageService) {
+    return { success: false, error: 'TypeScript language service not available' };
+  }
   try {
     const syntacticDiagnostics = languageService.getSyntacticDiagnostics(fileName);
     const semanticDiagnostics = languageService.getSemanticDiagnostics(fileName);
@@ -1031,6 +1069,9 @@ ipcMain.handle('ts:getDiagnostics', async (event, fileName) => {
 
 // IPC handler para ir a definición
 ipcMain.handle('ts:getDefinition', async (event, fileName, position) => {
+  if (!languageService) {
+    return { success: false, error: 'TypeScript language service not available' };
+  }
   try {
     const definitions = languageService.getDefinitionAtPosition(fileName, position);
 
@@ -1059,6 +1100,9 @@ ipcMain.handle('ts:getDefinition', async (event, fileName, position) => {
 
 // IPC handler para obtener ayuda de firma
 ipcMain.handle('ts:getSignatureHelp', async (event, fileName, position) => {
+  if (!languageService) {
+    return { success: false, error: 'TypeScript language service not available' };
+  }
   try {
     const signatureHelp = languageService.getSignatureHelpItems(fileName, position);
 
@@ -1097,6 +1141,9 @@ ipcMain.handle('ts:getSignatureHelp', async (event, fileName, position) => {
 
 // IPC handler para obtener correcciones rápidas
 ipcMain.handle('ts:getQuickFixes', async (event, fileName, start, length) => {
+  if (!languageService) {
+    return { success: false, error: 'TypeScript language service not available' };
+  }
   try {
     const textRange = { pos: start, end: start + length };
     const fixes = languageService.getCodeFixesAtPosition(fileName, start, start + length, [], {}, {});
@@ -1122,6 +1169,11 @@ ipcMain.handle('ts:getQuickFixes', async (event, fileName, start, length) => {
 
 // Listener IPC para obtener sugerencias de autocompletado
 ipcMain.on('get-suggestions', (event, { fileName, code, position }) => {
+  if (!languageService) {
+    console.warn('TypeScript language service not available');
+    event.reply('suggestions-result', []);
+    return;
+  }
   try {
     // 1. Actualiza el contenido del archivo en el host
     updateTsFile(fileName, code);

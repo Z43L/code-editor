@@ -274,7 +274,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   const activeTerminal = terminals.find(term => term.isActive)
 
   return (
-    <div className="h-full flex flex-col bg-[#1e1e1e] border-l border-[#3e3e3e]">
+    <div className="terminal-panel h-full flex flex-col bg-[#1e1e1e] border-l border-[#3e3e3e]">
       {/* Terminal Header */}
       <div className="flex items-center justify-between p-2 border-b border-[#3e3e3e]">
         <div className="flex items-center gap-2">

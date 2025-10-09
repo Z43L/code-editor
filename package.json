@@ -108,20 +108,22 @@
   "build": {
     "appId": "com.davmoren.code",
     "productName": "Code",
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/next/**/*",
+      "node_modules/typescript/**/*",
+      "node_modules/styled-jsx/**/*",
+      "node_modules/vscode-langservers-extracted/**/*",
+      "node_modules/pyright/**/*",
+      "node_modules/gopls/**/*"
+    ],
     "files": [
       ".next/**/*",
       "out/**/*",
       "main.js",
       "preload.js",
       "package.json"
-    ],
-    "asarUnpack": [
-      "node_modules/next/**/*",
-      "node_modules/react/**/*",
-      "node_modules/react-dom/**/*",
-      "node_modules/typescript/**/*",
-      "node_modules/vscode-langservers-extracted/**/*",
-      "node_modules/pyright/**/*"
     ],
     "directories": {
       "output": "dist",

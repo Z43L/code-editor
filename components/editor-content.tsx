@@ -504,7 +504,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
   }, [language, onContentChange]);
 
   // Optimized content change handler with debouncing
-  const handleContentChange = useCallback((newContent: string) => {
+  const handleContentChange = useCallback((newContent: string, skipAutoClose?: boolean) => {
     setContent(newContent)
     onContentChange(newContent)
     // Only mark as unsaved if content actually differs from last saved version
@@ -517,7 +517,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
     setTimeout(() => addToHistory(newContent), 500)
 
     // Manejar autocompletado para todos los lenguajes
-    if (file?.name) {
+    if (file?.name && !skipAutoClose) {
       setIsTyping(true);
       // Ocultar autocompletado mientras se escribe
       setShowAutocomplete(false);
@@ -541,7 +541,9 @@ const EditorContent: React.FC<EditorContentProps> = ({
     }
 
     // Detectar y procesar marcadores $$ para generación de código con IA
-    detectAndProcessAICodeMarkers(newContent);
+    if (!skipAutoClose) {
+      detectAndProcessAICodeMarkers(newContent);
+    }
   }, [onContentChange, addToHistory, lastSavedContent, file?.name])
 
   // Funciones para autocompletado TypeScript
@@ -989,6 +991,38 @@ const EditorContent: React.FC<EditorContentProps> = ({
   // Keyboard shortcuts (separate from autosave to avoid re-registering on content changes)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Verificar si el elemento activo es parte de la terminal
+      const activeElement = document.activeElement;
+      const isInTerminal = activeElement?.closest('.terminal-panel') !== null ||
+                          activeElement?.tagName === 'INPUT' &&
+                          activeElement?.getAttribute('placeholder')?.includes('comando');
+
+      // Si estamos en la terminal, solo permitir atajos de guardado globales
+      if (isInTerminal) {
+        // Solo permitir Ctrl+S y Ctrl+Shift+S cuando estamos en la terminal
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
+          console.log("🔑 Ctrl+Shift+S detected - Save All!");
+          e.preventDefault();
+          if (onSaveAllFiles) {
+            console.log("📁 Calling saveAllFiles");
+            onSaveAllFiles();
+          } else {
+            console.log("❌ onSaveAllFiles not available");
+          }
+        } else if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+          console.log("🔑 Ctrl+S detected!");
+          e.preventDefault();
+          if (file) {
+            console.log("📁 File exists, calling saveFile");
+            saveFile(file.path, content);
+          } else {
+            console.log("❌ No file to save");
+          }
+        }
+        // No procesar otros atajos de teclado cuando estamos en la terminal
+        return;
+      }
+
       // Only log save shortcuts to avoid spam
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         console.log("🎹 Key pressed:", { key: e.key, ctrlKey: e.ctrlKey, metaKey: e.shiftKey });
@@ -1027,14 +1061,53 @@ const EditorContent: React.FC<EditorContentProps> = ({
           const start = textarea.selectionStart;
           const end = textarea.selectionEnd;
           const tabChar = '  '; // 2 spaces for tab
-          const newContent = content.substring(0, start) + tabChar + content.substring(end);
-          setContent(newContent);
-          onContentChange(newContent);
-          
-          // Move cursor after the inserted tab
-          setTimeout(() => {
-            textarea.setSelectionRange(start + tabChar.length, start + tabChar.length);
-          }, 0);
+
+          // Si hay texto seleccionado, indentar todas las líneas
+          if (start !== end) {
+            const selectedText = content.substring(start, end);
+            const lines = selectedText.split('\n');
+
+            if (e.shiftKey) {
+              // Shift+Tab: Desindentar
+              const deindentedLines = lines.map(line => {
+                if (line.startsWith('  ')) {
+                  return line.substring(2);
+                } else if (line.startsWith('\t')) {
+                  return line.substring(1);
+                }
+                return line;
+              });
+              const newSelectedText = deindentedLines.join('\n');
+              const newContent = content.substring(0, start) + newSelectedText + content.substring(end);
+              setContent(newContent);
+              onContentChange(newContent);
+
+              setTimeout(() => {
+                textarea.setSelectionRange(start, start + newSelectedText.length);
+              }, 0);
+            } else {
+              // Tab: Indentar
+              const indentedLines = lines.map(line => tabChar + line);
+              const newSelectedText = indentedLines.join('\n');
+              const newContent = content.substring(0, start) + newSelectedText + content.substring(end);
+              setContent(newContent);
+              onContentChange(newContent);
+
+              setTimeout(() => {
+                textarea.setSelectionRange(start, start + newSelectedText.length);
+              }, 0);
+            }
+          } else {
+            // Si no hay selección, insertar tab simple
+            const newContent = content.substring(0, start) + tabChar + content.substring(end);
+            setContent(newContent);
+            onContentChange(newContent);
+
+            // Move cursor after the inserted tab
+            setTimeout(() => {
+              textarea.setSelectionRange(start + tabChar.length, start + tabChar.length);
+            }, 0);
+          }
         }
       }
     };
@@ -1364,6 +1437,121 @@ const EditorContent: React.FC<EditorContentProps> = ({
               onMouseOver={handleMouseOver}
               onMouseOut={handleMouseOut}
               onKeyDown={(e) => {
+                // Auto-indentación al presionar Enter
+                if (e.key === 'Enter') {
+                  const textarea = e.currentTarget;
+                  const start = textarea.selectionStart;
+                  const end = textarea.selectionEnd;
+
+                  // Obtener la línea actual
+                  const beforeCursor = content.substring(0, start);
+                  const afterCursor = content.substring(end);
+                  const currentLineStart = beforeCursor.lastIndexOf('\n') + 1;
+                  const currentLine = beforeCursor.substring(currentLineStart);
+
+                  // Detectar la indentación de la línea actual
+                  const indentMatch = currentLine.match(/^(\s*)/);
+                  const currentIndent = indentMatch ? indentMatch[1] : '';
+
+                  // Verificar si la línea termina con un carácter que requiere indentación adicional
+                  const lastChar = beforeCursor.trim().slice(-1);
+                  const shouldIncreaseIndent = lastChar === '{' || lastChar === '[' || lastChar === '(' || lastChar === ':';
+
+                  // Verificar si el siguiente carácter es un cierre
+                  const nextChar = afterCursor.trim().charAt(0);
+                  const isClosingChar = nextChar === '}' || nextChar === ']' || nextChar === ')';
+
+                  e.preventDefault();
+
+                  let newContent;
+                  let newCursorPos;
+
+                  if (shouldIncreaseIndent && isClosingChar) {
+                    // Si tenemos apertura y cierre, crear dos líneas con indentación correcta
+                    const extraIndent = '  '; // 2 espacios
+                    const newLine1 = '\n' + currentIndent + extraIndent;
+                    const newLine2 = '\n' + currentIndent;
+                    newContent = beforeCursor + newLine1 + newLine2 + afterCursor;
+                    newCursorPos = start + newLine1.length;
+                  } else if (shouldIncreaseIndent) {
+                    // Solo apertura, aumentar indentación
+                    const extraIndent = '  '; // 2 espacios
+                    const newLine = '\n' + currentIndent + extraIndent;
+                    newContent = beforeCursor + newLine + afterCursor;
+                    newCursorPos = start + newLine.length;
+                  } else {
+                    // Mantener la misma indentación
+                    const newLine = '\n' + currentIndent;
+                    newContent = beforeCursor + newLine + afterCursor;
+                    newCursorPos = start + newLine.length;
+                  }
+
+                  handleContentChange(newContent, true);
+                  setTimeout(() => {
+                    textarea.setSelectionRange(newCursorPos, newCursorPos);
+                  }, 0);
+                  return;
+                }
+
+                // Autocierre de caracteres
+                const closingChars: Record<string, string> = {
+                  '(': ')',
+                  '[': ']',
+                  '{': '}',
+                  '"': '"',
+                  "'": "'",
+                  '`': '`'
+                };
+
+                if (closingChars[e.key]) {
+                  const textarea = e.currentTarget;
+                  const start = textarea.selectionStart;
+                  const end = textarea.selectionEnd;
+                  const charAfter = content.charAt(start);
+
+                  // Para comillas, solo auto-cerrar si no hay ya una comilla del mismo tipo después
+                  if ((e.key === '"' || e.key === "'" || e.key === '`') && charAfter === e.key) {
+                    // Si el carácter siguiente es la misma comilla, simplemente mover el cursor
+                    e.preventDefault();
+                    setTimeout(() => {
+                      textarea.setSelectionRange(start + 1, start + 1);
+                    }, 0);
+                    return;
+                  }
+
+                  // Auto-cerrar el carácter
+                  e.preventDefault();
+                  const closingChar = closingChars[e.key];
+
+                  if (start !== end) {
+                    // Si hay selección, envolver la selección
+                    const selectedText = content.substring(start, end);
+                    const newContent = content.substring(0, start) + e.key + selectedText + closingChar + content.substring(end);
+                    handleContentChange(newContent, true);
+                    setTimeout(() => {
+                      textarea.setSelectionRange(start + 1, end + 1);
+                    }, 0);
+                  } else {
+                    // Si no hay selección, insertar el par
+                    const newContent = content.substring(0, start) + e.key + closingChar + content.substring(end);
+                    handleContentChange(newContent, true);
+                    setTimeout(() => {
+                      textarea.setSelectionRange(start + 1, start + 1);
+                    }, 0);
+                  }
+                  return;
+                }
+
+                // Si se presiona un carácter de cierre y ya está presente, simplemente mover el cursor
+                if ((e.key === ')' || e.key === ']' || e.key === '}') && content.charAt(textarea.selectionStart) === e.key) {
+                  e.preventDefault();
+                  const start = textarea.selectionStart;
+                  setTimeout(() => {
+                    textarea.setSelectionRange(start + 1, start + 1);
+                  }, 0);
+                  return;
+                }
+
                 // Manejar navegación del autocompletado
                 if (showAutocomplete) {
                   if (e.key === 'ArrowDown') {
