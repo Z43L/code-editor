@@ -578,10 +578,10 @@ export function FlutterEditor() {
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* Main Content - calculado para dejar espacio a la barra de comandos */}
+      <div className="flex flex-1 overflow-hidden min-h-0">
         {/* Sidebar */}
-        <div 
+        <div
           ref={sidebarRef}
           className="bg-[#252526] flex flex-col relative transition-all duration-200"
           style={{ width: sidebarCollapsed ? 32 : sidebarWidth }}
@@ -597,10 +597,10 @@ export function FlutterEditor() {
             </button>
           </div>
           <div className={`flex-1 overflow-hidden ${sidebarCollapsed ? 'hidden' : 'block'}`}>
-            <FileTree 
-              activeFile={activeFile} 
-              onFileSelect={handleFileSelect} 
-              files={files} 
+            <FileTree
+              activeFile={activeFile}
+              onFileSelect={handleFileSelect}
+              files={files}
               onCreateFile={createFile}
               onLoadRealFileContent={handleLoadRealFileContent}
               editorSettings={editorSettings}
@@ -623,7 +623,7 @@ export function FlutterEditor() {
         </div>
 
         {/* Editor Area */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col h-full">
           <EditorContent
             file={files[activeFile]}
             onContentChange={(content) => updateFileContent(activeFile, content)}
@@ -637,8 +637,8 @@ export function FlutterEditor() {
         </div>
 
         {/* Terminal Panel */}
-        <div 
-          className="bg-[#252526] flex flex-col relative transition-all duration-200 border-l border-[#3e3e3e]"
+        <div
+          className="bg-[#252526] flex flex-col relative transition-all duration-200 border-l border-[#3e3e3e] h-full"
           style={{ width: terminalCollapsed ? 32 : 400 }}
         >
           <div className="p-2 text-xs text-gray-300 uppercase tracking-wide bg-[#2d2d30] flex items-center justify-between">
@@ -661,18 +661,20 @@ export function FlutterEditor() {
         </div>
       </div>
 
-      {/* AI Command Bar */}
-      <AICommandBar 
-        activeFile={activeFile} 
-        files={files} 
-        onUpdateFile={updateFileContent} 
-        onCreateFile={createFile}
-        aiProvider={aiProvider}
-        chatFileName={editorSettings.chatFileName}
-        chatDirectory={editorSettings.chatDirectory}
-        onSelectFile={handleFileSelect}
-        fileContextIndex={fileContextIndex}
-      />
+      {/* AI Command Bar - altura fija */}
+      <div className="flex-shrink-0 bg-[#1e1e1e]">
+        <AICommandBar
+          activeFile={activeFile}
+          files={files}
+          onUpdateFile={updateFileContent}
+          onCreateFile={createFile}
+          aiProvider={aiProvider}
+          chatFileName={editorSettings.chatFileName}
+          chatDirectory={editorSettings.chatDirectory}
+          onSelectFile={handleFileSelect}
+          fileContextIndex={fileContextIndex}
+        />
+      </div>
     </div>
     </AIHoverProvider>
   )

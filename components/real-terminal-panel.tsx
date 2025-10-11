@@ -1,8 +1,8 @@
 "use client"
 
-import React, { useState, useEffect, useCallback } from "react"
-import { Plus, X, Terminal } from "lucide-react"
-import { XtermTerminal } from "./xterm-terminal"
+import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { ChevronLeft, ChevronRight, Plus, X, Terminal } from 'lucide-react'
+import { XtermTerminal } from './xterm-terminal'
 
 interface TerminalPanelProps {
   isExpanded: boolean
@@ -17,13 +17,15 @@ interface TerminalInstance {
   isActive: boolean
 }
 
-export const TerminalPanel: React.FC<TerminalPanelProps> = ({
+export const RealTerminalPanel: React.FC<TerminalPanelProps> = ({
   isExpanded,
   onToggle,
   workingDirectory
 }) => {
   const [terminals, setTerminals] = useState<TerminalInstance[]>([])
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null)
+  const [currentCommand, setCurrentCommand] = useState<string>('')
+  const commandBuffer = useRef<string>('')
 
   // Create initial terminal if none exists
   useEffect(() => {
@@ -70,6 +72,43 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     })))
     setActiveTerminalId(terminalId)
   }, [])
+
+  const handleTerminalData = useCallback(async (data: string) => {
+    if (!activeTerminalId) return
+
+    // Build command buffer
+    commandBuffer.current += data
+
+    // Handle Enter key
+    if (data === '\r') {
+      const command = commandBuffer.current.trim()
+      commandBuffer.current = ''
+
+      if (command && activeTerminalId) {
+        try {
+          const response = await fetch('/api/terminal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              command: command,
+              cwd: workingDirectory,
+              terminalId: activeTerminalId
+            })
+          })
+
+          const result = await response.json()
+
+          // Here we would send the output back to xterm.js
+          // For now, we'll just log it
+          if (result.success) {
+            console.log('Command executed:', result.output || result.error)
+          }
+        } catch (error) {
+          console.error('Command execution error:', error)
+        }
+      }
+    }
+  }, [activeTerminalId, workingDirectory])
 
   const activeTerminal = terminals.find(term => term.isActive)
 
@@ -123,11 +162,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       )}
 
       {/* Terminal Content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 p-3 overflow-hidden">
         {activeTerminal ? (
-          <div className="h-full w-full" key={activeTerminal.id}>
+          <div className="h-full bg-black rounded border border-[#3e3e3e] overflow-hidden">
             <XtermTerminal
-              key={activeTerminal.id}
+              onData={handleTerminalData}
               workingDirectory={activeTerminal.cwd}
             />
           </div>

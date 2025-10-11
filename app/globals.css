@@ -502,3 +502,96 @@ a,
   border-color: oklch(0.3 0 0);
   margin: 2rem 0;
 }
+
+/* Terminal styles - basic setup */
+.terminal-container .xterm-screen {
+  cursor: text !important;
+}
+
+.terminal-container .xterm-decoration-overview-ruler {
+  display: none !important;
+}
+
+/* Hide any resize handles within terminal */
+.terminal-container [class*="resize"],
+.terminal-container [class*="handle"] {
+  display: none !important;
+  pointer-events: none !important;
+}
+
+/* Ensure proper stacking of terminal layers */
+.terminal-container .xterm {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+/* Prevent horizontal scrolling in terminal */
+.terminal-container .xterm-viewport {
+  overflow-x: hidden !important;
+}
+
+/* Ensure terminal text is selectable */
+.terminal-container {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+/* Fix for xterm scrollbar */
+.terminal-container .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: #555 transparent;
+}
+
+.terminal-container .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-container .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-container .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
+/* Fix for terminal focus and input */
+.terminal-container .xterm-helper-textarea {
+  position: absolute !important;
+  opacity: 0 !important;
+  left: -9999px !important;
+  z-index: -10 !important;
+}
+
+/* Ensure xterm can receive focus */
+.terminal-container,
+.terminal-container .xterm,
+.terminal-container .xterm-screen {
+  outline: none !important;
+}
+
+/* Ensure terminal canvas is visible and properly sized */
+.terminal-container canvas {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* Ensure xterm viewport is visible and scrollable */
+.terminal-container .xterm-viewport {
+  width: 100% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scroll-behavior: smooth !important;
+}
+
+/* Make sure xterm screen is visible */
+.terminal-container .xterm-screen {
+  position: relative !important;
+}

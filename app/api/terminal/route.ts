@@ -12,14 +12,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Command is required' }, { status: 400 })
     }
 
-    // Ejecutar el comando usando exec para compatibilidad cross-platform
-    const execOptions = {
-      cwd: cwd || process.cwd(),
-      maxBuffer: 1024 * 1024, // 1MB buffer
+    // Handle special commands
+    if (command === 'clear') {
+      return NextResponse.json({
+        success: true,
+        output: '',
+        error: '',
+        exitCode: 0,
+        terminalId
+      })
     }
 
     try {
-      const { stdout, stderr } = await execAsync(command, execOptions)
+      // Use exec instead of spawn for better shell compatibility
+      const { stdout, stderr } = await execAsync(command, {
+        cwd: cwd || process.cwd(),
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024, // 1MB buffer
+        timeout: 30000, // 30 second timeout
+        env: process.env
+      })
 
       return NextResponse.json({
         success: true,
@@ -29,9 +41,9 @@ export async function POST(request: NextRequest) {
         terminalId
       })
     } catch (execError: any) {
-      // exec lanza error cuando el comando falla
+      // exec throws on non-zero exit codes
       return NextResponse.json({
-        success: true, // El comando se ejecutó, solo falló
+        success: false,
         output: execError.stdout || '',
         error: execError.stderr || execError.message,
         exitCode: execError.code || 1,
@@ -43,7 +55,7 @@ export async function POST(request: NextRequest) {
     console.error('Terminal API error:', error)
     return NextResponse.json({
       success: false,
-      error: 'Internal server error'
+      error: error instanceof Error ? error.message : 'Internal server error'
     }, { status: 500 })
   }
 }

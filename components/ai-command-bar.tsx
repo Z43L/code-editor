@@ -428,7 +428,7 @@ export function AICommandBar({ activeFile, files, onUpdateFile, onCreateFile, ai
   }, [])
 
   return (
-    <form onSubmit={handleSubmit} className="ai-command-bar flex items-center gap-2 px-4 py-2">
+    <form onSubmit={handleSubmit} className="ai-command-bar flex items-center gap-2 px-4 py-2 min-h-[3rem] border-t border-[#3e3e3e]">
       <input
         ref={inputRef}
         type="text"
