@@ -24,20 +24,24 @@ export const RealTerminalPanel: React.FC<TerminalPanelProps> = ({
 }) => {
   const [terminals, setTerminals] = useState<TerminalInstance[]>([])
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null)
-  const [currentCommand, setCurrentCommand] = useState<string>('')
-  const commandBuffer = useRef<string>('')
+  const initializedRef = useRef<boolean>(false)
+
+  console.log('[RealTerminalPanel] Render - terminals:', terminals.map(t => ({ id: t.id, active: t.isActive })))
 
   // Create initial terminal if none exists
   useEffect(() => {
-    if (terminals.length === 0 && workingDirectory) {
+    console.log('[RealTerminalPanel] Effect triggered - terminals.length:', terminals.length, 'workingDirectory:', workingDirectory)
+    if (!initializedRef.current && terminals.length === 0 && workingDirectory) {
+      console.log('[RealTerminalPanel] Creating initial terminal')
+      initializedRef.current = true
       const initialTerminal: TerminalInstance = {
-        id: 'terminal-1',
+        id: 'default',
         name: 'Terminal 1',
         cwd: workingDirectory,
         isActive: true
       }
       setTerminals([initialTerminal])
-      setActiveTerminalId('terminal-1')
+      setActiveTerminalId('default')
     }
   }, [workingDirectory, terminals.length])
 
@@ -53,7 +57,16 @@ export const RealTerminalPanel: React.FC<TerminalPanelProps> = ({
     setActiveTerminalId(newTerminal.id)
   }, [terminals.length, workingDirectory])
 
-  const closeTerminal = useCallback((terminalId: string) => {
+  const closeTerminal = useCallback(async (terminalId: string) => {
+    // Close the PTY session on the backend
+    try {
+      await fetch(`/api/terminal/pty?terminalId=${terminalId}`, {
+        method: 'DELETE'
+      })
+    } catch (error) {
+      console.error('Failed to close terminal session:', error)
+    }
+
     setTerminals(prev => {
       const filtered = prev.filter(term => term.id !== terminalId)
       // If we close the active terminal, activate the last remaining one
@@ -72,43 +85,6 @@ export const RealTerminalPanel: React.FC<TerminalPanelProps> = ({
     })))
     setActiveTerminalId(terminalId)
   }, [])
-
-  const handleTerminalData = useCallback(async (data: string) => {
-    if (!activeTerminalId) return
-
-    // Build command buffer
-    commandBuffer.current += data
-
-    // Handle Enter key
-    if (data === '\r') {
-      const command = commandBuffer.current.trim()
-      commandBuffer.current = ''
-
-      if (command && activeTerminalId) {
-        try {
-          const response = await fetch('/api/terminal', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              command: command,
-              cwd: workingDirectory,
-              terminalId: activeTerminalId
-            })
-          })
-
-          const result = await response.json()
-
-          // Here we would send the output back to xterm.js
-          // For now, we'll just log it
-          if (result.success) {
-            console.log('Command executed:', result.output || result.error)
-          }
-        } catch (error) {
-          console.error('Command execution error:', error)
-        }
-      }
-    }
-  }, [activeTerminalId, workingDirectory])
 
   const activeTerminal = terminals.find(term => term.isActive)
 
@@ -161,16 +137,9 @@ export const RealTerminalPanel: React.FC<TerminalPanelProps> = ({
         </div>
       )}
 
-      {/* Terminal Content */}
-      <div className="flex-1 p-3 overflow-hidden">
-        {activeTerminal ? (
-          <div className="h-full bg-black rounded border border-[#3e3e3e] overflow-hidden">
-            <XtermTerminal
-              onData={handleTerminalData}
-              workingDirectory={activeTerminal.cwd}
-            />
-          </div>
-        ) : (
+      {/* Terminal Content - Render all terminals but show only active one */}
+      <div className="flex-1 p-3 overflow-hidden relative">
+        {terminals.length === 0 ? (
           <div className="h-full flex items-center justify-center text-gray-400">
             <div className="text-center">
               <Terminal size={48} className="mx-auto mb-4 opacity-50" />
@@ -183,6 +152,24 @@ export const RealTerminalPanel: React.FC<TerminalPanelProps> = ({
               </button>
             </div>
           </div>
+        ) : (
+          terminals.map((terminal) => (
+            <div
+              key={terminal.id}
+              className="h-full bg-black rounded border border-[#3e3e3e] overflow-hidden absolute inset-0"
+              style={{
+                visibility: terminal.isActive ? 'visible' : 'hidden',
+                pointerEvents: terminal.isActive ? 'auto' : 'none',
+                zIndex: terminal.isActive ? 10 : 1
+              }}
+            >
+              <XtermTerminal
+                terminalId={terminal.id}
+                workingDirectory={terminal.cwd}
+                isActive={terminal.isActive}
+              />
+            </div>
+          ))
         )}
       </div>
     </div>

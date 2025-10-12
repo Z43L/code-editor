@@ -2,6 +2,10 @@ import { NextRequest } from 'next/server'
 import * as pty from 'node-pty'
 import * as os from 'os'
 
+// Force this route to be dynamic (not statically analyzed at build time)
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 // Store active PTY sessions
 const sessions = new Map<string, pty.IPty>()
 
@@ -9,45 +13,59 @@ const sessions = new Map<string, pty.IPty>()
 export async function GET(request: NextRequest) {
   console.log('[PTY GET] ========== NEW GET REQUEST ==========')
   const { searchParams } = new URL(request.url)
-  const terminalId = searchParams.get('terminalId') || 'default'
+  let terminalId = searchParams.get('terminalId') || 'default'
+  // Handle the case where terminalId is the string "undefined"
+  if (terminalId === 'undefined' || terminalId === 'null') {
+    terminalId = 'default'
+  }
   const cwd = searchParams.get('cwd') || process.cwd()
 
   console.log('[PTY GET] Request params:', { terminalId, cwd })
   console.log('[PTY GET] Sessions BEFORE creation:', Array.from(sessions.keys()))
 
-  // Determine shell based on OS and configure with minimal settings
-  const userShell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash'
-  console.log('[PTY GET] User shell:', userShell)
+  // Check if session already exists
+  let ptyProcess = sessions.get(terminalId)
 
-  // Prepare environment with simplified prompt
-  const env = {
-    ...(process.env as { [key: string]: string }),
-    TERM: 'xterm-256color',
-    COLORTERM: 'truecolor',
-    // Force simple prompt for both bash and zsh
-    PS1: '$ ',
-    PROMPT: '$ ',
-    // Disable special zsh features
-    PROMPT_EOL_MARK: '',
-    PROMPT_SP: ''
+  if (ptyProcess) {
+    console.log('[PTY GET] ✅ Reusing existing session:', terminalId)
+  } else {
+    console.log('[PTY GET] Creating new PTY session:', terminalId)
+
+    // Determine shell based on OS and configure with minimal settings
+    const userShell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash'
+    console.log('[PTY GET] User shell:', userShell)
+
+    // Prepare environment with simplified prompt
+    const env = {
+      ...(process.env as { [key: string]: string }),
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      // Force simple prompt for both bash and zsh
+      PS1: '$ ',
+      PROMPT: '$ ',
+      // Disable special zsh features
+      PROMPT_EOL_MARK: '',
+      PROMPT_SP: ''
+    }
+
+    // Use default shell with normal config files
+    console.log('[PTY GET] Shell command:', userShell)
+    console.log('[PTY GET] Creating PTY process...')
+
+    // Create PTY process - empty array for args means load normal config
+    ptyProcess = pty.spawn(userShell, [], {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      cwd: cwd,
+      env: env
+    })
+
+    // Store session
+    sessions.set(terminalId, ptyProcess)
+    console.log('[PTY GET] ✅ Session stored successfully')
   }
 
-  // Use default shell with normal config files
-  console.log('[PTY GET] Shell command:', userShell)
-  console.log('[PTY GET] Creating PTY process...')
-
-  // Create PTY process - empty array for args means load normal config
-  const ptyProcess = pty.spawn(userShell, [], {
-    name: 'xterm-256color',
-    cols: 80,
-    rows: 24,
-    cwd: cwd,
-    env: env
-  })
-
-  // Store session
-  sessions.set(terminalId, ptyProcess)
-  console.log('[PTY GET] ✅ Session stored successfully')
   console.log('[PTY GET] Sessions AFTER creation:', Array.from(sessions.keys()))
   console.log('[PTY GET] Total sessions:', sessions.size)
 
@@ -79,12 +97,12 @@ export async function GET(request: NextRequest) {
           keepAliveInterval = null
         }
 
-        if (sessions.has(terminalId)) {
-          console.log(`[PTY GET] ❌ DELETING session ${terminalId}`)
-          ptyProcess.kill()
-          sessions.delete(terminalId)
-          console.log('[PTY GET] Sessions after deletion:', Array.from(sessions.keys()))
-        }
+        // Remove listeners for this stream
+        streamCleanup()
+
+        // DON'T delete the session - keep it alive for reconnection
+        console.log(`[PTY GET] ℹ️ Keeping session ${terminalId} alive for reconnection`)
+        console.log('[PTY GET] Active sessions:', Array.from(sessions.keys()))
 
         try {
           controller.close()
@@ -104,7 +122,7 @@ export async function GET(request: NextRequest) {
       )
 
       // Listen to PTY output
-      ptyProcess.onData((data) => {
+      const dataListener = ptyProcess.onData((data) => {
         console.log(`[PTY GET] PTY output for ${terminalId}:`, data.slice(0, 50))
         safeEnqueue(
           encoder.encode(`data: ${JSON.stringify({
@@ -116,7 +134,7 @@ export async function GET(request: NextRequest) {
       })
 
       // Handle PTY exit
-      ptyProcess.onExit(({ exitCode, signal }) => {
+      const exitListener = ptyProcess.onExit(({ exitCode, signal }) => {
         safeEnqueue(
           encoder.encode(`data: ${JSON.stringify({
             type: 'exit',
@@ -125,8 +143,17 @@ export async function GET(request: NextRequest) {
             signal
           })}\n\n`)
         )
+        // When PTY exits, remove the session
+        sessions.delete(terminalId)
         cleanup()
       })
+
+      // Store cleanup for this stream connection
+      const streamCleanup = () => {
+        // Remove listeners when stream closes
+        dataListener.dispose()
+        exitListener.dispose()
+      }
 
       // Keep connection alive
       keepAliveInterval = setInterval(() => {
@@ -158,7 +185,12 @@ export async function GET(request: NextRequest) {
 // POST endpoint for sending input to PTY
 export async function POST(request: NextRequest) {
   try {
-    const { terminalId = 'default', data, resize } = await request.json()
+    let { terminalId = 'default', data, resize } = await request.json()
+
+    // Handle the case where terminalId is the string "undefined" or "null"
+    if (terminalId === 'undefined' || terminalId === 'null') {
+      terminalId = 'default'
+    }
 
     console.log('[PTY POST] Request:', { terminalId, hasData: !!data, hasResize: !!resize })
     console.log('[PTY POST] Active sessions:', Array.from(sessions.keys()))
@@ -223,7 +255,11 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const terminalId = searchParams.get('terminalId') || 'default'
+    let terminalId = searchParams.get('terminalId') || 'default'
+    // Handle the case where terminalId is the string "undefined" or "null"
+    if (terminalId === 'undefined' || terminalId === 'null') {
+      terminalId = 'default'
+    }
 
     const ptyProcess = sessions.get(terminalId)
 

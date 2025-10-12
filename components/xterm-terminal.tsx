@@ -5,16 +5,20 @@ import '@xterm/xterm/css/xterm.css'
 
 interface XtermTerminalProps {
   workingDirectory: string
+  terminalId: string
+  isActive: boolean
 }
 
-export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory }) => {
+export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory, terminalId, isActive }) => {
   const terminalRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
-  const terminalIdRef = useRef<string>(`terminal-${Date.now()}`)
   const terminalInstanceRef = useRef<any>(null)
   const hasInitialized = useRef<boolean>(false)
+  const fitAddonRef = useRef<any>(null)
+  const initialWorkingDirectory = useRef<string>(workingDirectory)
 
   useEffect(() => {
+    console.log(`[XtermTerminal ${terminalId}] Component mounted or terminalId changed`)
     let terminal: any
     let fitAddon: any
     let isCleanedUp = false
@@ -24,12 +28,12 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory }
 
       // Prevent double initialization
       if (hasInitialized.current) {
-        console.log('Terminal already initialized, skipping...')
+        console.log(`[XtermTerminal ${terminalId}] Terminal already initialized, skipping...`)
         return
       }
       hasInitialized.current = true
 
-      console.log('Initializing terminal...')
+      console.log(`[XtermTerminal ${terminalId}] Initializing terminal...`)
 
       // Dynamic import for xterm.js components
       const { Terminal } = await import('@xterm/xterm')
@@ -166,11 +170,12 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory }
       }, 200)
 
       // Connect to PTY via Server-Sent Events
-      const terminalId = terminalIdRef.current
       const eventSource = new EventSource(
-        `/api/terminal/pty?terminalId=${terminalId}&cwd=${encodeURIComponent(workingDirectory)}`
+        `/api/terminal/pty?terminalId=${terminalId}&cwd=${encodeURIComponent(initialWorkingDirectory.current)}`
       )
       eventSourceRef.current = eventSource
+
+      fitAddonRef.current = fitAddon
 
       eventSource.onopen = () => {
         console.log('PTY connection established')
@@ -281,9 +286,9 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory }
         resizeObserver.observe(terminalRef.current)
       }
 
-      // Cleanup
+      // Cleanup (but DON'T delete the PTY session)
       return () => {
-        console.log('Cleaning up terminal...')
+        console.log('Cleaning up terminal UI...')
         isCleanedUp = true
         hasInitialized.current = false
         resizeObserver.disconnect()
@@ -295,29 +300,45 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory }
           terminal.dispose()
         }
         terminalInstanceRef.current = null
-        // Close terminal session on backend
-        fetch(`/api/terminal/pty?terminalId=${terminalId}`, {
-          method: 'DELETE'
-        }).catch(console.error)
+        fitAddonRef.current = null
+        // DON'T delete the PTY session - it should persist
       }
     }
 
     initTerminal()
 
     return () => {
-      console.log('Effect cleanup triggered')
+      console.log(`[XtermTerminal ${terminalId}] ⚠️ CLEANUP TRIGGERED - Component unmounting!`)
+      console.trace(`[XtermTerminal ${terminalId}] Cleanup stack trace`)
       isCleanedUp = true
       hasInitialized.current = false
       if (eventSourceRef.current) {
+        console.log(`[XtermTerminal ${terminalId}] Closing EventSource`)
         eventSourceRef.current.close()
         eventSourceRef.current = null
       }
       if (terminalInstanceRef.current) {
+        console.log(`[XtermTerminal ${terminalId}] Disposing terminal instance`)
         terminalInstanceRef.current.dispose()
         terminalInstanceRef.current = null
       }
+      fitAddonRef.current = null
     }
-  }, [workingDirectory])
+  }, [terminalId])
+
+  // Handle visibility changes when switching between terminals
+  useEffect(() => {
+    if (isActive && terminalInstanceRef.current && fitAddonRef.current) {
+      // When terminal becomes active, fit and focus it
+      setTimeout(() => {
+        if (fitAddonRef.current && terminalInstanceRef.current) {
+          fitAddonRef.current.fit()
+          terminalInstanceRef.current.focus()
+          terminalInstanceRef.current.scrollToBottom()
+        }
+      }, 50)
+    }
+  }, [isActive])
 
   return (
     <div className="w-full h-full relative" style={{ backgroundColor: '#1e1e1e' }}>

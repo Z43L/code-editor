@@ -6,19 +6,21 @@
   "private": true,
   "main": "main.js",
   "scripts": {
-    "build": "next build",
+    "build": "bash scripts/rebuild-native.sh && next build",
+    "build:next": "next build",
+    "build:quick": "bash scripts/quick-build.sh",
+    "build:native": "bash scripts/rebuild-native.sh",
     "dev": "next dev -p 3001",
     "lint": "next lint",
     "start": "next start",
     "electron": "wait-on http://localhost:3001 && electron .",
     "electron:start": "concurrently -k \"cross-env BROWSER=none PORT=3001 pnpm dev\" \"pnpm electron\"",
-    "electron:build": "next build && electron-builder",
-    "build:mac": "next build && electron-builder --mac",
-    "build:win": "next build && electron-builder --win",
-    "build:linux": "next build && electron-builder --linux",
-    "build:all": "next build && electron-builder --mac --win --linux",
-    "dist": "pnpm run build:all",
-    "build:script": "./scripts/build-all.sh",
+    "electron:build": "bash scripts/rebuild-native.sh && next build && electron-builder",
+    "build:mac": "bash scripts/rebuild-native.sh && next build && electron-builder --mac",
+    "build:win": "bash scripts/rebuild-native.sh && next build && electron-builder --win",
+    "build:linux": "bash scripts/build-linux.sh",
+    "build:all": "bash scripts/build-all-platforms.sh",
+    "dist": "bash scripts/build-all-platforms.sh",
     "icons": "./scripts/generate-icons.sh"
   },
   "dependencies": {
@@ -237,7 +239,9 @@
   "pnpm": {
     "allowedScripts": {
       "electron": true,
-      "electron-winstaller": true
+      "electron-winstaller": true,
+      "node-pty": true,
+      "@tailwindcss/oxide": true
     }
   }
 }

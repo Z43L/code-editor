@@ -245,6 +245,10 @@ const EditorContent: React.FC<EditorContentProps> = ({
   // Estados para errores de sintaxis
   const [syntaxErrors, setSyntaxErrors] = useState<SyntaxError[]>([]);
   const [showSyntaxErrorPanel, setShowSyntaxErrorPanel] = useState(false);
+  // Estados para file watching
+  const [externalChangeDetected, setExternalChangeDetected] = useState(false);
+  const [externalChangeContent, setExternalChangeContent] = useState<string>('');
+  const fileWatcherRef = useRef<EventSource | null>(null);
   // ---
 
   // --- Funciones auxiliares ---
@@ -867,6 +871,25 @@ const EditorContent: React.FC<EditorContentProps> = ({
     }
   }, [file?.name, content, handleContentChange, hideTypeScriptQuickFixes]);
 
+  // Funciones para manejar cambios externos
+  const acceptExternalChange = useCallback(() => {
+    console.log('[File Watch] Accepting external change');
+    setContent(externalChangeContent);
+    onContentChange(externalChangeContent);
+    setLastSavedContent(externalChangeContent);
+    setSaveStatus('saved');
+    setExternalChangeDetected(false);
+    setExternalChangeContent('');
+    // Actualizar history
+    addToHistory(externalChangeContent);
+  }, [externalChangeContent, onContentChange, addToHistory]);
+
+  const rejectExternalChange = useCallback(() => {
+    console.log('[File Watch] Rejecting external change');
+    setExternalChangeDetected(false);
+    setExternalChangeContent('');
+  }, []);
+
   // Función de ejemplo para obtener sugerencias
   const handleGetTypeScriptSuggestions = useCallback(async (cursorPosition: number) => {
     if (!file?.name) {
@@ -935,6 +958,78 @@ const EditorContent: React.FC<EditorContentProps> = ({
       setTypescriptErrors([]);
     }
   }, [content, file?.name, getTypeScriptErrors, isTyping]);
+
+  // File watcher: detectar cambios externos en el archivo
+  useEffect(() => {
+    if (!file?.path) return;
+
+    console.log('[File Watch] Setting up watcher for:', file.path);
+
+    // Cerrar watcher anterior si existe
+    if (fileWatcherRef.current) {
+      fileWatcherRef.current.close();
+      fileWatcherRef.current = null;
+    }
+
+    // Crear conexión SSE para este archivo
+    const eventSource = new EventSource(
+      `/api/files/watch?filePath=${encodeURIComponent(file.path)}`
+    );
+    fileWatcherRef.current = eventSource;
+
+    eventSource.onopen = () => {
+      console.log('[File Watch] Connection established for:', file.path);
+    };
+
+    eventSource.onmessage = (event) => {
+      // Ignorar mensajes vacíos (keep-alive)
+      if (!event.data || event.data.trim() === '' || event.data.startsWith(':')) {
+        return;
+      }
+
+      try {
+        const message = JSON.parse(event.data);
+
+        switch (message.type) {
+          case 'connected':
+            console.log('[File Watch] File watch connected:', message);
+            break;
+
+          case 'changed':
+            console.log('[File Watch] File changed externally:', file.path);
+            // Solo notificar si el contenido es diferente al actual
+            if (message.content !== content) {
+              setExternalChangeContent(message.content);
+              setExternalChangeDetected(true);
+            }
+            break;
+
+          case 'deleted':
+            console.log('[File Watch] File deleted:', file.path);
+            // Podrías mostrar un mensaje al usuario aquí
+            break;
+        }
+      } catch (error) {
+        // Silenciar errores de parsing para keep-alive
+        if (event.data && event.data !== ':') {
+          console.error('[File Watch] Failed to parse SSE message:', error, event.data);
+        }
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('[File Watch] SSE error:', error);
+    };
+
+    // Cleanup al desmontar o cambiar de archivo
+    return () => {
+      console.log('[File Watch] Cleaning up watcher for:', file.path);
+      if (fileWatcherRef.current) {
+        fileWatcherRef.current.close();
+        fileWatcherRef.current = null;
+      }
+    };
+  }, [file?.path]);
 
   // Update content when switching files (not when content changes within same file)
   useEffect(() => {
@@ -1230,6 +1325,34 @@ const EditorContent: React.FC<EditorContentProps> = ({
 
   return (
     <div className="flex-1 bg-[#1e1e1e] overflow-hidden flex flex-col">
+      {/* Banner de cambio externo detectado */}
+      {externalChangeDetected && (
+        <div className="bg-yellow-600/90 border-b border-yellow-700 px-4 py-3 flex items-center justify-between z-50">
+          <div className="flex items-center gap-3">
+            <span className="text-yellow-100 text-sm font-medium">
+              ⚠️ El archivo ha sido modificado externamente
+            </span>
+            <span className="text-yellow-200 text-xs">
+              ¿Deseas recargar el contenido?
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={acceptExternalChange}
+              className="px-3 py-1 bg-yellow-700 hover:bg-yellow-800 text-white text-xs rounded transition-colors"
+            >
+              Aceptar cambios
+            </button>
+            <button
+              onClick={rejectExternalChange}
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-800 text-white text-xs rounded transition-colors"
+            >
+              Mantener actual
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Panel de Errores de Sintaxis */}
       {syntaxErrors.length > 0 && (
         <div className="fixed top-0 right-0 z-40 bg-red-900/90 border-l border-b border-red-700 rounded-bl-lg max-w-md max-h-64 overflow-y-auto">
@@ -1269,27 +1392,6 @@ const EditorContent: React.FC<EditorContentProps> = ({
           <span className="text-gray-500">({language})</span>
           {saveStatus === "unsaved" && <span className="text-yellow-400" title="Archivo modificado">●</span>}
           {saveStatus === "saving" && <span className="text-blue-400" title="Guardando...">💾</span>}
-          {onLoadFileContent && (
-            <button
-              onClick={async () => {
-                try {
-                  const realContent = await onLoadFileContent(file.path)
-                  if (realContent) {
-                    handleContentChange(realContent)
-                  }
-                } catch (error) {
-                  // Only log errors that are not user cancellations
-                  if ((error as Error).name !== 'AbortError') {
-                    console.error('Error loading file:', error)
-                  }
-                }
-              }}
-              className="ml-2 px-2 py-1 bg-[#0e639c] hover:bg-[#1177bb] text-white text-xs rounded transition-colors"
-              title="Cargar contenido real del archivo"
-            >
-              📂 Cargar
-            </button>
-          )}
         </div>
         <div className="flex items-center gap-4 text-xs text-gray-400">
           <span>Líneas: {lineCount}</span>
