@@ -29,6 +29,20 @@ const nextConfig = {
   publicRuntimeConfig: {
     staticFolder: './static',
   },
+  // Habilitar Fast Refresh para hot reload
+  reactStrictMode: true,
+  // Configuración de webpack para mejorar el hot reload
+  webpack: (config, { dev, isServer }) => {
+    if (dev && !isServer) {
+      // Mejorar el hot reload en desarrollo
+      config.watchOptions = {
+        poll: 1000, // Polling cada 1 segundo (útil en sistemas de archivos compartidos)
+        aggregateTimeout: 300,
+        ignored: /node_modules/,
+      }
+    }
+    return config
+  },
 }
 
 export default nextConfig

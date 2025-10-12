@@ -98,11 +98,17 @@ export async function GET(request: NextRequest) {
         const watcher = fs.watch(filePath, (eventType, filename) => {
           console.log(`[File Watch] File event: ${eventType} for ${filePath}`)
 
+          // Get the current watcher data from the map (not from closure)
+          const currentWatcherData = watchers.get(filePath)
+          if (!currentWatcherData) {
+            console.log(`[File Watch] Watcher data not found for ${filePath}`)
+            return
+          }
+
           // Check if file still exists (could be deleted)
           if (!fs.existsSync(filePath)) {
             console.log(`[File Watch] File deleted: ${filePath}`)
-            const data = watcherData?.clients || new Set()
-            data.forEach(client => {
+            currentWatcherData.clients.forEach(client => {
               try {
                 client.enqueue(
                   encoder.encode(`data: ${JSON.stringify({
@@ -132,8 +138,8 @@ export async function GET(request: NextRequest) {
               const newContent = fs.readFileSync(filePath, 'utf-8')
 
               // Notify all clients watching this file
-              const data = watcherData?.clients || new Set()
-              data.forEach(client => {
+              console.log(`[File Watch] Notifying ${currentWatcherData.clients.size} client(s)`)
+              currentWatcherData.clients.forEach(client => {
                 try {
                   client.enqueue(
                     encoder.encode(`data: ${JSON.stringify({
@@ -143,10 +149,13 @@ export async function GET(request: NextRequest) {
                       timestamp: currentModifiedTime
                     })}\n\n`)
                   )
+                  console.log(`[File Watch] Client notified successfully`)
                 } catch (error) {
                   console.error('[File Watch] Error notifying client:', error)
                 }
               })
+            } else {
+              console.log(`[File Watch] File not modified (same timestamp), skipping notification`)
             }
           } catch (error) {
             console.error('[File Watch] Error reading file:', error)

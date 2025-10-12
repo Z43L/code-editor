@@ -633,6 +633,7 @@ export function FlutterEditor() {
             onSaveAllFiles={saveAllFiles}
             projectContext={fileContextIndex}
             aiProvider={aiProvider}
+            workspacePath={workspacePath}
           />
         </div>
 

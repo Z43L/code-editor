@@ -178,6 +178,7 @@ interface EditorContentProps {
   };
   showLineNumbers?: boolean;
   viewMode?: 'edit' | 'preview';
+  workspacePath?: string;
   projectContext?: Record<string, any>;
   aiProvider?: AIProvider;
 }
@@ -193,6 +194,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
   viewMode = 'edit',
   projectContext,
   aiProvider,
+  workspacePath,
 }) => {
   // --- Estados principales ---
   const [content, setContent] = useState(file?.content || "");
@@ -963,7 +965,14 @@ const EditorContent: React.FC<EditorContentProps> = ({
   useEffect(() => {
     if (!file?.path) return;
 
-    console.log('[File Watch] Setting up watcher for:', file.path);
+    // Construir la ruta absoluta del archivo
+    const absolutePath = workspacePath && !file.path.startsWith('/') && !file.path.includes(':')
+      ? `${workspacePath}/${file.path}`
+      : file.path;
+
+    console.log('[File Watch] Setting up watcher for:', absolutePath);
+    console.log('[File Watch] Relative path:', file.path);
+    console.log('[File Watch] Workspace path:', workspacePath);
 
     // Cerrar watcher anterior si existe
     if (fileWatcherRef.current) {
@@ -973,12 +982,12 @@ const EditorContent: React.FC<EditorContentProps> = ({
 
     // Crear conexión SSE para este archivo
     const eventSource = new EventSource(
-      `/api/files/watch?filePath=${encodeURIComponent(file.path)}`
+      `/api/files/watch?filePath=${encodeURIComponent(absolutePath)}`
     );
     fileWatcherRef.current = eventSource;
 
     eventSource.onopen = () => {
-      console.log('[File Watch] Connection established for:', file.path);
+      console.log('[File Watch] Connection established for:', absolutePath);
     };
 
     eventSource.onmessage = (event) => {
@@ -996,7 +1005,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
             break;
 
           case 'changed':
-            console.log('[File Watch] File changed externally:', file.path);
+            console.log('[File Watch] File changed externally:', absolutePath);
             // Solo notificar si el contenido es diferente al actual
             if (message.content !== content) {
               setExternalChangeContent(message.content);
@@ -1005,7 +1014,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
             break;
 
           case 'deleted':
-            console.log('[File Watch] File deleted:', file.path);
+            console.log('[File Watch] File deleted:', absolutePath);
             // Podrías mostrar un mensaje al usuario aquí
             break;
         }
@@ -1023,13 +1032,13 @@ const EditorContent: React.FC<EditorContentProps> = ({
 
     // Cleanup al desmontar o cambiar de archivo
     return () => {
-      console.log('[File Watch] Cleaning up watcher for:', file.path);
+      console.log('[File Watch] Cleaning up watcher for:', absolutePath);
       if (fileWatcherRef.current) {
         fileWatcherRef.current.close();
         fileWatcherRef.current = null;
       }
     };
-  }, [file?.path]);
+  }, [file?.path, workspacePath, content]);
 
   // Update content when switching files (not when content changes within same file)
   useEffect(() => {
