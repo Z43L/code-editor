@@ -5,7 +5,7 @@ import hljs from 'highlight.js/lib/core'
 import 'highlight.js/styles/github-dark.css'
 // @ts-ignore
 // import { Linter } from 'eslint4b'
-import { Save } from "lucide-react"
+import { Save, Eye, Code, Split, Search, ChevronUp, ChevronDown, X, CaseSensitive } from "lucide-react"
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTypeScript } from '../hooks/use-typescript'
@@ -13,6 +13,8 @@ import { useLanguageService } from '../hooks/use-language-service'
 import { TypeScriptAutocomplete } from './typescript-autocomplete'
 import { TypeScriptSignatureHelp } from './typescript-signature-help'
 import { TypeScriptQuickFixes } from './typescript-quick-fixes'
+import { createHeader, extractHeader, updateHeader, supportsLanguage } from '../lib/header'
+import type { HeaderConfig } from '../lib/header'
 
 
 // const jsTsLinter = new Linter();
@@ -175,6 +177,10 @@ interface EditorContentProps {
     wordWrap: boolean;
     aiHover: boolean;
     hover: boolean;
+    headerUsername?: string;
+    headerEmail?: string;
+    headerAsciiLogo?: string;
+    headerDomain?: string;
   };
   showLineNumbers?: boolean;
   viewMode?: 'edit' | 'preview';
@@ -211,6 +217,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
   const [showEditor, setShowEditor] = useState(true);
   const [editorTextSizeClass] = useState('text-sm');
   const [isMarkdown, setIsMarkdown] = useState(() => file?.name?.endsWith('.md') || false);
+  const [markdownViewMode, setMarkdownViewMode] = useState<'edit' | 'preview' | 'split'>('edit');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Hook para servicios de lenguaje (soporta múltiples lenguajes)
@@ -251,6 +258,15 @@ const EditorContent: React.FC<EditorContentProps> = ({
   const [externalChangeDetected, setExternalChangeDetected] = useState(false);
   const [externalChangeContent, setExternalChangeContent] = useState<string>('');
   const fileWatcherRef = useRef<EventSource | null>(null);
+
+  // Estados para el buscador
+  const [showFindBar, setShowFindBar] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  const [totalMatches, setTotalMatches] = useState(0);
+  const [searchMatches, setSearchMatches] = useState<Array<{start: number, end: number, line: number}>>([]);
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const findInputRef = useRef<HTMLInputElement>(null);
   // ---
 
   // --- Funciones auxiliares ---
@@ -1044,7 +1060,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
   useEffect(() => {
     const newFilePath = file?.path || ""
     const newContent = file?.content || ""
-    
+
     // Only reset if we're switching to a different file
     if (newFilePath !== currentFilePath) {
       setCurrentFilePath(newFilePath)
@@ -1055,6 +1071,10 @@ const EditorContent: React.FC<EditorContentProps> = ({
       setHistory([newContent])
       setHistoryIndex(0)
       setIsUndoRedo(false)
+      // Update markdown detection
+      setIsMarkdown(file?.name?.endsWith('.md') || false)
+      // Reset view mode when switching files
+      setMarkdownViewMode('edit')
     }
   }, [file?.path, currentFilePath]) // Only watch for path changes
 
@@ -1063,26 +1083,55 @@ const EditorContent: React.FC<EditorContentProps> = ({
     console.log("📂 FilePath:", filePath);
     console.log("📄 Content preview:", fileContent.slice(0, 100) + "...");
     console.log("🔌 onSaveFile exists:", !!onSaveFile);
-    
+
     if (!onSaveFile) {
       console.log("❌ onSaveFile is null/undefined - ABORTING");
       return;
     }
 
+    // Guardar la posición actual del cursor
+    const currentCursorPosition = textareaRef.current?.selectionStart || 0;
+    const currentScrollTop = textareaRef.current?.scrollTop || 0;
+
+    // Verificar si hay un header y actualizarlo ANTES de cualquier cosa
+    let contentToSave = fileContent;
+    const existingHeader = extractHeader(fileContent);
+
+    if (existingHeader && settings.headerUsername) {
+      console.log("📝 Actualizando fecha de modificación en header...");
+      const updatedHeader = updateHeader(existingHeader, settings.headerUsername);
+      contentToSave = fileContent.replace(existingHeader, updatedHeader);
+      console.log("✅ Header actualizado con nueva fecha");
+
+      // Actualizar el contenido en el estado INMEDIATAMENTE
+      setContent(contentToSave);
+    }
+
     console.log("💾 Setting status to 'saving'...");
     setSaveStatus("saving");
-    
+
     try {
       console.log("🔄 Calling onSaveFile...");
-      await onSaveFile(filePath, fileContent);
+      await onSaveFile(filePath, contentToSave);
       console.log("✅ onSaveFile completed successfully!");
-      
+
       console.log("📝 Updating lastSavedContent...");
-      setLastSavedContent(fileContent);
-      
+      setLastSavedContent(contentToSave);
+
       console.log("💚 Setting status to 'saved'...");
       setSaveStatus("saved");
-      
+
+      // Restaurar la posición del cursor y scroll después de guardar
+      if (textareaRef.current) {
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.setSelectionRange(currentCursorPosition, currentCursorPosition);
+            textareaRef.current.scrollTop = currentScrollTop;
+            textareaRef.current.focus();
+          }
+        }, 0);
+      }
+
       console.log("🎉 Save process COMPLETED successfully for:", filePath);
     } catch (error) {
       console.error("💥 Save process FAILED:");
@@ -1090,7 +1139,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
       console.log("🔴 Setting status back to 'unsaved'...");
       setSaveStatus("unsaved");
     }
-  }, [onSaveFile]);
+  }, [onSaveFile, settings.headerUsername]);
 
   // Keyboard shortcuts (separate from autosave to avoid re-registering on content changes)
   useEffect(() => {
@@ -1156,6 +1205,23 @@ const EditorContent: React.FC<EditorContentProps> = ({
       } else if (e.ctrlKey && e.key === 'z') {
         e.preventDefault();
         undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        // Ctrl+F o Cmd+F: Abrir buscador
+        e.preventDefault();
+        setShowFindBar(true);
+        // Si hay texto seleccionado, usarlo como término de búsqueda
+        if (textareaRef.current) {
+          const start = textareaRef.current.selectionStart;
+          const end = textareaRef.current.selectionEnd;
+          if (start !== end) {
+            const selected = content.substring(start, end);
+            setSearchTerm(selected);
+          }
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+        // Ctrl+H o Cmd+H: Insertar/actualizar header 42
+        e.preventDefault();
+        insertOrUpdateHeader();
       } else if (e.key === 'Tab') {
         // Prevent Tab from moving focus to AI command bar
         e.preventDefault();
@@ -1301,6 +1367,143 @@ const EditorContent: React.FC<EditorContentProps> = ({
     handleContentChange(newContent)
   }, [content, selectionStart, selectionEnd, file?.name, handleContentChange])
 
+  // Función para insertar o actualizar el header 42
+  const insertOrUpdateHeader = useCallback(() => {
+    if (!file?.name) return
+
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    if (!extension) return
+
+    // Mapear extensiones a languageId
+    const languageMap: Record<string, string> = {
+      'c': 'c',
+      'cpp': 'cpp',
+      'cc': 'cpp',
+      'cxx': 'cpp',
+      'h': 'c',
+      'hpp': 'cpp',
+      'js': 'javascript',
+      'jsx': 'javascriptreact',
+      'ts': 'typescript',
+      'tsx': 'typescriptreact',
+      'py': 'python',
+      'rb': 'ruby',
+      'go': 'go',
+      'rs': 'rust',
+      'java': 'java',
+      'css': 'css',
+      'scss': 'scss',
+      'html': 'html',
+      'sh': 'shellscript',
+      'php': 'php',
+      'swift': 'swift'
+    }
+
+    const languageId = languageMap[extension] || 'plaintext'
+
+    // Verificar si el lenguaje es soportado
+    if (!supportsLanguage(languageId)) {
+      alert(`El lenguaje ${extension} no es soportado para headers 42`)
+      return
+    }
+
+    // Construir configuración del header
+    const headerConfig: HeaderConfig = {
+      username: settings.headerUsername || 'user',
+      email: settings.headerEmail || 'user@student.42.fr',
+      asciiLogo: settings.headerAsciiLogo || undefined,
+      domain: settings.headerDomain || 'student.42.fr'
+    }
+
+    // Verificar si ya existe un header
+    const existingHeader = extractHeader(content)
+
+    let newContent: string
+
+    if (existingHeader) {
+      // Actualizar header existente
+      const updatedHeader = updateHeader(existingHeader, headerConfig.username)
+      newContent = content.replace(existingHeader, updatedHeader)
+    } else {
+      // Crear nuevo header
+      const header = createHeader(file.name, languageId, headerConfig)
+      newContent = header + content
+    }
+
+    handleContentChange(newContent)
+    setSaveStatus('unsaved')
+  }, [file?.name, content, settings, handleContentChange])
+
+  // Lógica de búsqueda - Encontrar todas las coincidencias con debounce
+  useEffect(() => {
+    if (!searchTerm || searchTerm.length === 0) {
+      setSearchMatches([]);
+      setTotalMatches(0);
+      setCurrentMatchIndex(0);
+      return;
+    }
+
+    // Debounce de 2 segundos para esperar a que termine de escribir
+    const searchTimeout = setTimeout(() => {
+      const matches: Array<{start: number, end: number, line: number}> = [];
+      const searchText = caseSensitive ? searchTerm : searchTerm.toLowerCase();
+      const contentToSearch = caseSensitive ? content : content.toLowerCase();
+
+      let index = 0;
+      while (index < contentToSearch.length) {
+        const foundIndex = contentToSearch.indexOf(searchText, index);
+        if (foundIndex === -1) break;
+
+        // Calcular el número de línea
+        const lineNumber = content.substring(0, foundIndex).split('\n').length - 1;
+
+        matches.push({
+          start: foundIndex,
+          end: foundIndex + searchTerm.length,
+          line: lineNumber
+        });
+
+        index = foundIndex + 1;
+      }
+
+      setSearchMatches(matches);
+      setTotalMatches(matches.length);
+
+      // Resetear al primer resultado si hay coincidencias
+      if (matches.length > 0 && currentMatchIndex >= matches.length) {
+        setCurrentMatchIndex(0);
+      }
+    }, 2000); // 2 segundos de delay
+
+    // Cleanup: cancelar el timeout si el usuario sigue escribiendo
+    return () => clearTimeout(searchTimeout);
+  }, [searchTerm, content, caseSensitive]);
+
+  // Navegar al match actual y enfocar
+  useEffect(() => {
+    if (searchMatches.length > 0 && textareaRef.current) {
+      const currentMatch = searchMatches[currentMatchIndex];
+      if (currentMatch) {
+        // Seleccionar el texto encontrado
+        textareaRef.current.setSelectionRange(currentMatch.start, currentMatch.end);
+        textareaRef.current.focus();
+
+        // Scroll para hacer visible la coincidencia
+        const lineHeight = 24; // altura de línea en px
+        const scrollPosition = currentMatch.line * lineHeight;
+        textareaRef.current.scrollTop = Math.max(0, scrollPosition - 100); // offset de 100px
+      }
+    }
+  }, [currentMatchIndex, searchMatches]);
+
+  // Focus automático en el input cuando se abre el buscador
+  useEffect(() => {
+    if (showFindBar && findInputRef.current) {
+      findInputRef.current.focus();
+      findInputRef.current.select();
+    }
+  }, [showFindBar]);
+
   // Expose editor actions globally for AI integration
   useEffect(() => {
     const editorActions = {
@@ -1405,7 +1608,49 @@ const EditorContent: React.FC<EditorContentProps> = ({
         <div className="flex items-center gap-4 text-xs text-gray-400">
           <span>Líneas: {lineCount}</span>
           <span>Caracteres: {content.length}</span>
-          
+
+          {/* Markdown View Mode Buttons - Solo visible para archivos .md */}
+          {isMarkdown && (
+            <div className="flex items-center gap-1 border-r border-[#3e3e3e] pr-4">
+              <button
+                onClick={() => setMarkdownViewMode('edit')}
+                className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+                  markdownViewMode === 'edit'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-[#2d2d30] text-gray-400 hover:bg-[#3a3a3a] hover:text-white'
+                }`}
+                title="Modo edición"
+              >
+                <Code className="h-3 w-3" />
+                <span className="text-xs">Editar</span>
+              </button>
+              <button
+                onClick={() => setMarkdownViewMode('split')}
+                className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+                  markdownViewMode === 'split'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-[#2d2d30] text-gray-400 hover:bg-[#3a3a3a] hover:text-white'
+                }`}
+                title="Vista dividida"
+              >
+                <Split className="h-3 w-3" />
+                <span className="text-xs">Dividir</span>
+              </button>
+              <button
+                onClick={() => setMarkdownViewMode('preview')}
+                className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+                  markdownViewMode === 'preview'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-[#2d2d30] text-gray-400 hover:bg-[#3a3a3a] hover:text-white'
+                }`}
+                title="Vista previa"
+              >
+                <Eye className="h-3 w-3" />
+                <span className="text-xs">Vista previa</span>
+              </button>
+            </div>
+          )}
+
           {/* Save Buttons */}
           <div className="flex items-center gap-1">
             {/* Save Current File */}
@@ -1470,12 +1715,117 @@ const EditorContent: React.FC<EditorContentProps> = ({
         </div>
       </div>
 
+      {/* Find Bar - Buscador */}
+      {showFindBar && (
+        <div className="bg-[#2d2d30] border-b border-[#3e3e3e] px-4 py-2 flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-1">
+            <Search className="h-4 w-4 text-gray-400" />
+            <input
+              ref={findInputRef}
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Buscar en el archivo..."
+              className="bg-[#1e1e1e] text-white px-3 py-1 rounded text-sm outline-none focus:ring-1 focus:ring-blue-500 flex-1"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (e.shiftKey) {
+                    // Shift+Enter: ir a la coincidencia anterior
+                    if (totalMatches > 0) {
+                      setCurrentMatchIndex((prev) => (prev - 1 + totalMatches) % totalMatches);
+                    }
+                  } else {
+                    // Enter: ir a la siguiente coincidencia
+                    if (totalMatches > 0) {
+                      setCurrentMatchIndex((prev) => (prev + 1) % totalMatches);
+                    }
+                  }
+                } else if (e.key === 'Escape') {
+                  setShowFindBar(false);
+                  setSearchTerm('');
+                  setSearchMatches([]);
+                  setCurrentMatchIndex(0);
+                  setTotalMatches(0);
+                }
+              }}
+            />
+            <div className="text-xs text-gray-400 min-w-[60px]">
+              {totalMatches > 0 ? `${currentMatchIndex + 1} de ${totalMatches}` : 'No hay resultados'}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1">
+            {/* Botón Case Sensitive */}
+            <button
+              onClick={() => setCaseSensitive(!caseSensitive)}
+              className={`p-1 rounded transition-colors ${
+                caseSensitive
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-[#1e1e1e] text-gray-400 hover:text-white'
+              }`}
+              title="Coincidir mayúsculas/minúsculas"
+            >
+              <span className="text-xs font-bold px-1">Aa</span>
+            </button>
+
+            {/* Navegación */}
+            <button
+              onClick={() => {
+                if (totalMatches > 0) {
+                  setCurrentMatchIndex((prev) => (prev - 1 + totalMatches) % totalMatches);
+                }
+              }}
+              disabled={totalMatches === 0}
+              className="p-1 rounded bg-[#1e1e1e] text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Anterior (Shift+Enter)"
+            >
+              <ChevronUp className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => {
+                if (totalMatches > 0) {
+                  setCurrentMatchIndex((prev) => (prev + 1) % totalMatches);
+                }
+              }}
+              disabled={totalMatches === 0}
+              className="p-1 rounded bg-[#1e1e1e] text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Siguiente (Enter)"
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+
+            {/* Botón cerrar */}
+            <button
+              onClick={() => {
+                setShowFindBar(false);
+                setSearchTerm('');
+                setSearchMatches([]);
+                setCurrentMatchIndex(0);
+                setTotalMatches(0);
+                textareaRef.current?.focus();
+              }}
+              className="p-1 rounded bg-[#1e1e1e] text-gray-400 hover:text-white ml-2"
+              title="Cerrar (Esc)"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Editor */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Content */}
-        <div className="flex-1 relative overflow-hidden">
-          {/* Line Numbers */}
-          {showLineNumbers && (
+      <div className="flex flex-1 overflow-hidden h-full">
+        {/* Content - Ajustar para vista dividida, ocultar en modo preview */}
+        <div className={`relative overflow-hidden ${
+          markdownViewMode === 'preview' && isMarkdown
+            ? 'hidden'
+            : markdownViewMode === 'split' && isMarkdown
+              ? 'w-1/2 border-r border-[#3e3e3e]'
+              : 'flex-1'
+        }`}>
+          {/* Line Numbers - Solo visible en modo edit o split */}
+          {showLineNumbers && (markdownViewMode === 'edit' || markdownViewMode === 'split' || !isMarkdown) && (
             <div className="absolute left-0 top-0 bg-[#1e1e1e] text-[#858585] leading-6 px-2 py-4 select-none w-[60px] border-r border-[#3e3e3e] overflow-hidden z-10">
               <div 
                 className="overflow-hidden"
@@ -1493,8 +1843,8 @@ const EditorContent: React.FC<EditorContentProps> = ({
             </div>
           )}
 
-          {/* Overlay con errores de sintaxis debajo de cada línea */}
-          {showEditor && settings.syntaxHighlighting && (
+          {/* Overlay con errores de sintaxis debajo de cada línea - Solo visible en modo edit o split */}
+          {showEditor && settings.syntaxHighlighting && (markdownViewMode === 'edit' || markdownViewMode === 'split' || !isMarkdown) && (
             <div
               ref={overlayRef}
               className={`absolute inset-0 ${showLineNumbers ? 'pl-[68px]' : 'pl-4'} pr-4 pt-4 pb-4 leading-6 font-mono pointer-events-none overflow-hidden text-white ${editorTextSizeClass} ${
@@ -1530,8 +1880,8 @@ const EditorContent: React.FC<EditorContentProps> = ({
             </div>
           )}
 
-          {/* Main Textarea */}
-          {showEditor && (
+          {/* Main Textarea - Solo visible en modo edit o split */}
+          {showEditor && (markdownViewMode === 'edit' || markdownViewMode === 'split' || !isMarkdown) && (
             <textarea
               ref={textareaRef}
               value={content}
@@ -1706,16 +2056,52 @@ const EditorContent: React.FC<EditorContentProps> = ({
             />
           )}
 
-          {isMarkdown && viewMode === "preview" && (
-            <div className="absolute inset-0 overflow-auto p-6 bg-[#1e1e1e] markdown-preview">
-              <div className="max-w-3xl mx-auto">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{}}>
-                  {content}
-                </ReactMarkdown>
-              </div>
-            </div>
-          )}
         </div>
+
+        {/* Markdown Preview Panel - Solo visible en modo preview o split */}
+        {isMarkdown && (markdownViewMode === 'preview' || markdownViewMode === 'split') && (
+          <div className={`overflow-auto bg-[#1e1e1e] h-full ${
+            markdownViewMode === 'split' ? 'w-1/2' : 'flex-1'
+          }`}>
+            <div className="p-8 prose prose-invert max-w-none h-full">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  // Personalizar componentes de ReactMarkdown para mejor estilo
+                  h1: ({node, ...props}) => <h1 className="text-4xl font-bold mb-4 text-white border-b border-gray-700 pb-2" {...props} />,
+                  h2: ({node, ...props}) => <h2 className="text-3xl font-bold mb-3 mt-6 text-white border-b border-gray-700 pb-2" {...props} />,
+                  h3: ({node, ...props}) => <h3 className="text-2xl font-bold mb-2 mt-5 text-white" {...props} />,
+                  h4: ({node, ...props}) => <h4 className="text-xl font-bold mb-2 mt-4 text-white" {...props} />,
+                  h5: ({node, ...props}) => <h5 className="text-lg font-bold mb-2 mt-3 text-white" {...props} />,
+                  h6: ({node, ...props}) => <h6 className="text-base font-bold mb-2 mt-3 text-gray-300" {...props} />,
+                  p: ({node, ...props}) => <p className="mb-4 text-gray-200 leading-7" {...props} />,
+                  a: ({node, ...props}) => <a className="text-blue-400 hover:text-blue-300 underline" {...props} />,
+                  ul: ({node, ...props}) => <ul className="list-disc list-inside mb-4 text-gray-200 space-y-1" {...props} />,
+                  ol: ({node, ...props}) => <ol className="list-decimal list-inside mb-4 text-gray-200 space-y-1" {...props} />,
+                  li: ({node, ...props}) => <li className="ml-4" {...props} />,
+                  blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-300 my-4" {...props} />,
+                  code: ({node, inline, ...props}: any) =>
+                    inline
+                      ? <code className="bg-gray-800 text-pink-400 px-1.5 py-0.5 rounded text-sm font-mono" {...props} />
+                      : <code className="block bg-gray-900 text-gray-200 p-4 rounded-lg overflow-x-auto text-sm font-mono my-4" {...props} />,
+                  pre: ({node, ...props}) => <pre className="bg-gray-900 rounded-lg overflow-x-auto my-4" {...props} />,
+                  img: ({node, ...props}) => <img className="max-w-full h-auto rounded-lg my-4" {...props} />,
+                  table: ({node, ...props}) => <table className="min-w-full border-collapse border border-gray-700 my-4" {...props} />,
+                  thead: ({node, ...props}) => <thead className="bg-gray-800" {...props} />,
+                  tbody: ({node, ...props}) => <tbody {...props} />,
+                  tr: ({node, ...props}) => <tr className="border-b border-gray-700" {...props} />,
+                  th: ({node, ...props}) => <th className="border border-gray-700 px-4 py-2 text-left text-white font-semibold" {...props} />,
+                  td: ({node, ...props}) => <td className="border border-gray-700 px-4 py-2 text-gray-200" {...props} />,
+                  hr: ({node, ...props}) => <hr className="my-8 border-gray-700" {...props} />,
+                  strong: ({node, ...props}) => <strong className="font-bold text-white" {...props} />,
+                  em: ({node, ...props}) => <em className="italic text-gray-300" {...props} />,
+                }}
+              >
+                {content}
+              </ReactMarkdown>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* TypeScript Autocomplete */}

@@ -18,6 +18,10 @@ interface EditorSettings {
   autosave: boolean
   aiHover: boolean
   hover: boolean
+  headerUsername: string
+  headerEmail: string
+  headerAsciiLogo: string
+  headerDomain: string
 }
 
 type BooleanEditorSetting =
@@ -41,6 +45,10 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   autosave: true,
   aiHover: false,
   hover: true,
+  headerUsername: "user",
+  headerEmail: "user@student.42.fr",
+  headerAsciiLogo: "",
+  headerDomain: "student.42.fr",
 }
 
 export type { EditorSettings }
@@ -2363,6 +2371,90 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
                     placeholder="chats"
                   />
+                </div>
+
+                {/* Header Configuration Section */}
+                <div className="pt-3 border-t border-[#5e5e5e]">
+                  <div className="text-xs font-medium text-gray-200 mb-2">Configuración del Header 42</div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-300">Nombre de usuario:</label>
+                    <input
+                      type="text"
+                      value={currentSettings.headerUsername}
+                      onChange={(e) => {
+                        if (onSettingsChange) {
+                          onSettingsChange({
+                            ...currentSettings,
+                            headerUsername: e.target.value
+                          })
+                        }
+                      }}
+                      className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                      placeholder="user"
+                    />
+                  </div>
+
+                  <div className="space-y-1 mt-2">
+                    <label className="text-xs text-gray-300">Email:</label>
+                    <input
+                      type="email"
+                      value={currentSettings.headerEmail}
+                      onChange={(e) => {
+                        if (onSettingsChange) {
+                          onSettingsChange({
+                            ...currentSettings,
+                            headerEmail: e.target.value
+                          })
+                        }
+                      }}
+                      className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                      placeholder="user@student.42.fr"
+                    />
+                  </div>
+
+                  <div className="space-y-1 mt-2">
+                    <label className="text-xs text-gray-300">Dominio:</label>
+                    <input
+                      type="text"
+                      value={currentSettings.headerDomain}
+                      onChange={(e) => {
+                        if (onSettingsChange) {
+                          onSettingsChange({
+                            ...currentSettings,
+                            headerDomain: e.target.value
+                          })
+                        }
+                      }}
+                      className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                      placeholder="student.42.fr"
+                    />
+                  </div>
+
+                  <div className="space-y-1 mt-2">
+                    <label className="text-xs text-gray-300">Logo ASCII personalizado (7 líneas, max 78 caracteres por línea):</label>
+                    <textarea
+                      value={currentSettings.headerAsciiLogo}
+                      onChange={(e) => {
+                        if (onSettingsChange) {
+                          onSettingsChange({
+                            ...currentSettings,
+                            headerAsciiLogo: e.target.value
+                          })
+                        }
+                      }}
+                      rows={7}
+                      className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                      placeholder="Deja vacío para usar el logo por defecto de 42"
+                      style={{ fontFamily: 'monospace', fontSize: '10px' }}
+                    />
+                    <div className="text-xs text-gray-500 mt-1">
+                      {currentSettings.headerAsciiLogo
+                        ? `${currentSettings.headerAsciiLogo.split('\n').length} líneas`
+                        : 'Usando logo por defecto'
+                      }
+                    </div>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
