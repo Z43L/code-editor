@@ -128,7 +128,7 @@ function createWindow() {
   // Protocol registration is handled in app.whenReady() to avoid conflicts
 
   if (isDev) {
-    const devPort = process.env.PORT || '3001';
+    const devPort = process.env.PORT || '45623';
     const devUrl = process.env.DEV_SERVER_URL || `http://localhost:${devPort}`;
     mainWindow.loadURL(devUrl);
   } else {

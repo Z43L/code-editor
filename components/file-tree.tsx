@@ -1,5 +1,3 @@
-"use client"
-
 import type React from "react"
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { ChevronDown, ChevronRight, File, Folder, Plus, Settings, FolderOpen, X, Search, RefreshCw, FolderPlus, FilePlus, RotateCcw } from "lucide-react"
@@ -423,9 +421,9 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
 
   // Use default AI provider if not provided
   const currentAiProvider = aiProvider || {
-    type: 'openrouter' as const,
-    apiKey: '',
-    model: 'anthropic/claude-3.5-sonnet'
+    type: 'ollama' as const,
+    baseUrl: 'http://localhost:11434',
+    model: 'llama3.2'
   }
 
   const handleAiProviderChange = (newProvider: AIProvider) => {
@@ -2457,68 +2455,160 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs text-gray-300">Proveedor de AI: OpenRouter</label>
-                </div>
+                {/* AI Provider Section */}
+                <div className="pt-3 border-t border-[#5e5e5e]">
+                  <div className="text-xs font-medium text-gray-200 mb-2">Configuración de IA</div>
 
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-300">API Key:</label>
-                  <input
-                    type="password"
-                    value={currentAiProvider.apiKey || ''}
-                    onChange={(e) => {
-                      handleAiProviderChange({
-                        ...currentAiProvider,
-                        apiKey: e.target.value
-                      })
-                    }}
-                    className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
-                    placeholder="sk-or-..."
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-gray-300">Modelo:</label>
-                  <input
-                    type="text"
-                    value={currentAiProvider.model || ''}
-                    onChange={(e) => {
-                      handleAiProviderChange({
-                        ...currentAiProvider,
-                        model: e.target.value
-                      })
-                    }}
-                    className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
-                    placeholder="anthropic/claude-3.5-sonnet"
-                  />
-                </div>
-                <div className="pt-2">
-                  <button
-                    onClick={async () => {
-                      if (!currentAiProvider.apiKey) {
-                        alert('Por favor, ingresa tu API key de OpenRouter primero.');
-                        return;
-                      }
-                      
-                      try {
-                        const testProvider = { ...currentAiProvider };
-                        const { aiService } = await import('../lib/ai-service');
-                        aiService.setProvider(testProvider);
-                        
-                        const isHealthy = await aiService.healthCheck();
-                        if (isHealthy) {
-                          alert('✅ Conexión exitosa con OpenRouter!');
-                        } else {
-                          alert('❌ Error de conexión. Verifica tu API key y conexión a internet.');
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-300">Proveedor de IA:</label>
+                    <select
+                      value={currentAiProvider.type}
+                      onChange={(e) => {
+                        const newType = e.target.value as 'local' | 'openrouter' | 'ollama';
+                        const defaultConfig = {
+                          local: { type: 'local' as const, baseUrl: 'http://localhost:8080' },
+                          openrouter: { type: 'openrouter' as const, apiKey: '', model: 'anthropic/claude-3.5-sonnet' },
+                          ollama: { type: 'ollama' as const, baseUrl: 'http://localhost:11434', model: 'llama3.2' }
+                        };
+                        handleAiProviderChange(defaultConfig[newType]);
+                      }}
+                      className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="local">Local</option>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="ollama">Ollama</option>
+                    </select>
+                  </div>
+
+                  {/* OpenRouter specific fields */}
+                  {currentAiProvider.type === 'openrouter' && (
+                    <>
+                      <div className="space-y-1 mt-2">
+                        <label className="text-xs text-gray-300">API Key:</label>
+                        <input
+                          type="password"
+                          value={currentAiProvider.apiKey || ''}
+                          onChange={(e) => {
+                            handleAiProviderChange({
+                              ...currentAiProvider,
+                              apiKey: e.target.value
+                            })
+                          }}
+                          className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                          placeholder="sk-or-..."
+                        />
+                      </div>
+                      <div className="space-y-1 mt-2">
+                        <label className="text-xs text-gray-300">Modelo:</label>
+                        <input
+                          type="text"
+                          value={currentAiProvider.model || ''}
+                          onChange={(e) => {
+                            handleAiProviderChange({
+                              ...currentAiProvider,
+                              model: e.target.value
+                            })
+                          }}
+                          className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                          placeholder="anthropic/claude-3.5-sonnet"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Ollama specific fields */}
+                  {currentAiProvider.type === 'ollama' && (
+                    <>
+                      <div className="space-y-1 mt-2">
+                        <label className="text-xs text-gray-300">URL de Ollama:</label>
+                        <input
+                          type="text"
+                          value={currentAiProvider.baseUrl || 'http://localhost:11434'}
+                          onChange={(e) => {
+                            handleAiProviderChange({
+                              ...currentAiProvider,
+                              baseUrl: e.target.value
+                            })
+                          }}
+                          className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                          placeholder="http://localhost:11434"
+                        />
+                      </div>
+                      <div className="space-y-1 mt-2">
+                        <label className="text-xs text-gray-300">Modelo:</label>
+                        <input
+                          type="text"
+                          value={currentAiProvider.model || ''}
+                          onChange={(e) => {
+                            handleAiProviderChange({
+                              ...currentAiProvider,
+                              model: e.target.value
+                            })
+                          }}
+                          className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                          placeholder="llama3.2"
+                        />
+                        <div className="text-xs text-gray-500 mt-1">
+                          Ejemplos: llama3.2, codellama, mistral, etc.
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Local server specific fields */}
+                  {currentAiProvider.type === 'local' && (
+                    <div className="space-y-1 mt-2">
+                      <label className="text-xs text-gray-300">URL del servidor:</label>
+                      <input
+                        type="text"
+                        value={currentAiProvider.baseUrl || 'http://localhost:8080'}
+                        onChange={(e) => {
+                          handleAiProviderChange({
+                            ...currentAiProvider,
+                            baseUrl: e.target.value
+                          })
+                        }}
+                        className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                        placeholder="http://localhost:8080"
+                      />
+                    </div>
+                  )}
+
+                  {/* Test Connection Button */}
+                  <div className="pt-2">
+                    <button
+                      onClick={async () => {
+                        if (currentAiProvider.type === 'openrouter' && !currentAiProvider.apiKey) {
+                          alert('Por favor, ingresa tu API key de OpenRouter primero.');
+                          return;
                         }
-                      } catch (error) {
-                        console.error('Test connection error:', error);
-                        alert(`❌ Error: ${error instanceof Error ? error.message : 'Error desconocido'}`);
-                      }
-                    }}
-                    className="w-full px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
-                  >
-                    Probar Conexión
-                  </button>
+                        
+                        try {
+                          const testProvider = { ...currentAiProvider };
+                          const { aiService } = await import('../lib/ai-service');
+                          aiService.setProvider(testProvider);
+                          
+                          const isHealthy = await aiService.healthCheck();
+                          if (isHealthy) {
+                            const providerNames = {
+                              local: 'servidor local',
+                              openrouter: 'OpenRouter',
+                              ollama: 'Ollama'
+                            };
+                            alert(`✅ Conexión exitosa con ${providerNames[currentAiProvider.type]}!`);
+                          } else {
+                            alert('❌ Error de conexión. Verifica tu configuración y conexión.');
+                          }
+                        } catch (error) {
+                          console.error('Test connection error:', error);
+                          alert(`❌ Error: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+                        }
+                      }}
+                      className="w-full px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
+                    >
+                      Probar Conexión
+                    </button>
+                  </div>
                 </div>
 
                 {/* Botón Guardar Configuración */}

@@ -1,3 +1,16 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                   ________      _____      */
+/*    button.tsx                                     \______ \    /     \     */
+/*                                                    |    |  \  /  \ /  \    */
+/*    By: davmoren <davmoren@z43l.zzz>                |    `   \/    Y    \   */
+/*                                                   /_______  /\____|__  /   */
+/*    Created: 2026/02/28 00:41:51 by davmoren               \/         \/    */
+/*    Updated: 2026/02/28 00:41:53 by davmoren                                */
+/*                                                                            */
+/* ************************************************************************** */
+
+
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import { cva, type VariantProps } from 'class-variance-authority'

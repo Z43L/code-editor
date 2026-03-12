@@ -83,9 +83,9 @@ export function FlutterEditor() {
   const [activeFile, setActiveFile] = useState<string>("README.md")
   const [editorSettings, setEditorSettings] = useState<EditorSettings>({ ...DEFAULT_EDITOR_SETTINGS })
   const [aiProvider, setAiProvider] = useState<AIProvider>({
-    type: 'openrouter',
-    apiKey: process.env.OPENROUTER_API_KEY || '',
-    model: process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-sonnet'
+    type: 'ollama',
+    baseUrl: 'http://localhost:11434',
+    model: 'llama3.2'
   })
   const [sidebarWidth, setSidebarWidth] = useState(256)
   const [isResizing, setIsResizing] = useState(false)
@@ -94,6 +94,7 @@ export function FlutterEditor() {
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(false)
   const [terminalCollapsed, setTerminalCollapsed] = useState(true)
   const sidebarRef = useRef<HTMLDivElement>(null)
+  const snapshotDebounceRef = useRef<Record<string, NodeJS.Timeout>>({})
 
   const handleEditorSettingsChange = useCallback((settings: EditorSettings) => {
     setEditorSettings((prev) => {
@@ -202,7 +203,6 @@ export function FlutterEditor() {
   })
 
   const updateFileContent = useCallback((filePath: string, content: string) => {
-    const snapshot = createSnapshotFromContent(filePath, content)
     setFiles((prev) => ({
       ...prev,
       [filePath]: {
@@ -211,19 +211,39 @@ export function FlutterEditor() {
         type: "file",
         path: filePath,
         content,
-        summary: snapshot.summary,
-        hash: snapshot.hash,
-        preview: snapshot.preview,
-        metadata: snapshot,
       },
     }))
-    setFileContextIndex((prev) => ({
-      ...prev,
-      [filePath]: {
-        ...(prev[filePath] || {}),
-        ...snapshot,
-      },
-    }))
+
+    if (snapshotDebounceRef.current[filePath]) {
+      clearTimeout(snapshotDebounceRef.current[filePath])
+    }
+
+    snapshotDebounceRef.current[filePath] = setTimeout(() => {
+      const snapshot = createSnapshotFromContent(filePath, content)
+      setFiles((prev) => ({
+        ...prev,
+        [filePath]: {
+          ...prev[filePath],
+          summary: snapshot.summary,
+          hash: snapshot.hash,
+          preview: snapshot.preview,
+          metadata: snapshot,
+        },
+      }))
+      setFileContextIndex((prev) => ({
+        ...prev,
+        [filePath]: {
+          ...(prev[filePath] || {}),
+          ...snapshot,
+        },
+      }))
+    }, 450)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      Object.values(snapshotDebounceRef.current).forEach((timeoutId) => clearTimeout(timeoutId))
+    }
   }, [])
 
   // Function to handle loading real file content from file tree

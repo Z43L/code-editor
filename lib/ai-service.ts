@@ -33,7 +33,7 @@ export interface EditorChatRequest {
 }
 
 export interface AIProvider {
-  type: 'local' | 'openrouter';
+  type: 'local' | 'openrouter' | 'ollama';
   apiKey?: string;
   model?: string;
   baseUrl?: string;
@@ -184,13 +184,31 @@ class AIService {
 
   async sendEditorChat(request: EditorChatRequest): Promise<EditorChatResponse> {
     try {
-      if (this.provider.type === 'local') {
-        return await this.sendLocalRequest(request);
-      } else if (this.provider.type === 'openrouter') {
-        return await this.sendOpenRouterRequest(request);
-      } else {
-        throw new Error('Unsupported AI provider');
+      // En lugar de hacer llamadas directas, usar la API route del servidor
+      // Esto evita problemas de CORS con Ollama y otros servicios locales
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          request: request,
+          provider: this.provider
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
       }
+
+      const data: EditorChatResponse = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      return data;
     } catch (error) {
       console.error('AI Service Error:', error);
       throw error;
@@ -341,43 +359,113 @@ class AIService {
     }
   }
 
-  async healthCheck(): Promise<boolean> {
+  private async sendOllamaRequest(request: EditorChatRequest): Promise<EditorChatResponse> {
+    const baseUrl = this.provider.baseUrl || 'http://localhost:11434';
+    const model = this.provider.model || 'llama3.2';
+    const prompt = this.buildPrompt(request);
+
     try {
-      if (this.provider.type === 'local') {
-        const baseUrl = this.provider.baseUrl || 'http://localhost:8080';
-        const response = await fetch(`${baseUrl}/health`);
-        return response.ok;
-      } else if (this.provider.type === 'openrouter') {
-        // For OpenRouter, validate API key and test connectivity
-        if (!this.provider.apiKey || !this.provider.apiKey.trim()) {
-          console.log('Health check failed: No API key provided');
-          return false;
-        }
+      console.log('Sending request to Ollama with model:', model);
+      
+      const response = await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          stream: false
+        })
+      });
 
-        if (!this.provider.apiKey.startsWith('sk-or-')) {
-          console.log('Health check failed: Invalid API key format');
-          return false;
-        }
+      console.log('Ollama response status:', response.status);
 
-        // Test with a minimal request to validate API key and connectivity
-        try {
-          const response = await fetch('https://openrouter.ai/api/v1/models', {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${this.provider.apiKey}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
-            },
-          });
-          
-          console.log('OpenRouter health check response status:', response.status);
-          return response.ok;
-        } catch (error) {
-          console.error('OpenRouter health check network error:', error);
-          return false;
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Ollama error response:', errorText);
+        
+        let errorMessage = `Ollama API error (${response.status})`;
+        
+        if (response.status === 404) {
+          errorMessage = `Modelo "${model}" no encontrado. Por favor, asegúrate de que el modelo esté instalado en Ollama.`;
+        } else if (response.status >= 500) {
+          errorMessage = 'Error del servidor Ollama. Por favor, verifica que Ollama esté ejecutándose.';
+        } else {
+          try {
+            const errorData = JSON.parse(errorText);
+            if (errorData.error) {
+              errorMessage += ` - ${errorData.error}`;
+            }
+          } catch {
+            errorMessage += ` - ${errorText}`;
+          }
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      console.log('Ollama response data:', data);
+      
+      if (data.error) {
+        throw new Error(`Ollama API error: ${data.error}`);
+      }
+      
+      const message = data.message?.content || 'No response generated';
+
+      return {
+        message,
+        is_code_response: this.isCodeResponse(message),
+        should_create_file: !request.has_selection && !request.active_file,
+        file_name: 'chat.md'
+      };
+    } catch (error) {
+      console.error('Ollama request failed:', error);
+      
+      if (error instanceof TypeError) {
+        if (error.message.includes('fetch')) {
+          throw new Error('Error de red: No se puede conectar a Ollama. Por favor, verifica que Ollama esté ejecutándose en ' + baseUrl);
+        } else if (error.message.includes('JSON')) {
+          throw new Error('Respuesta inválida de Ollama. El servicio puede estar temporalmente no disponible.');
         }
       }
-      return false;
+      
+      // Re-throw the error if it's already a custom error message
+      if (error instanceof Error && error.message.includes('Ollama')) {
+        throw error;
+      }
+      
+      throw new Error(`Error inesperado conectando a Ollama: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+    }
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      // Usar la API route del servidor para health checks
+      // Esto evita problemas de CORS y CSP
+      const params = new URLSearchParams({
+        provider: this.provider.type,
+        ...(this.provider.baseUrl && { baseUrl: this.provider.baseUrl }),
+        ...(this.provider.apiKey && { apiKey: this.provider.apiKey })
+      });
+
+      const response = await fetch(`/api/ai/chat?${params}`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        console.error('Health check failed:', response.status);
+        return false;
+      }
+
+      const data = await response.json();
+      return data.healthy === true;
     } catch (error) {
       console.error('Health check failed:', error);
       return false;

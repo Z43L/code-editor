@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue } from "react"
 import hljs from 'highlight.js/lib/core'
 import 'highlight.js/styles/github-dark.css'
 // @ts-ignore
@@ -67,6 +67,8 @@ const ensureLanguageRegistered = async (language: string) => {
 const getLanguageFromExtension = (filename: string = ""): string => {
   const ext = filename.split('.').pop()?.toLowerCase();
   switch (ext) {
+    case 'tsx': return 'typescript';
+    case 'jsx': return 'javascript';
     case 'js': return 'javascript';
     case 'ts': return 'typescript';
     case 'py': return 'python';
@@ -92,6 +94,7 @@ const getLanguageFromExtension = (filename: string = ""): string => {
 
 // Cálculo de número de líneas
 const getLineCount = (content: string) => (content.match(/\n/g)?.length ?? 0) + 1;
+const MAX_HIGHLIGHT_LINES = 1200;
 
 // Highlight.js integration - versión línea por línea
 const useHighlightContent = (code: string, language: string, settings: { syntaxHighlighting: boolean }) => {
@@ -129,7 +132,7 @@ const useHighlightLines = (lines: string[], language: string, settings: { syntax
   useEffect(() => {
     let cancelled = false;
     const doHighlight = async () => {
-      if (!settings.syntaxHighlighting) {
+      if (!settings.syntaxHighlighting || lines.length > MAX_HIGHLIGHT_LINES) {
         setHighlightedLines(lines);
         return;
       }
@@ -258,6 +261,9 @@ const EditorContent: React.FC<EditorContentProps> = ({
   const [externalChangeDetected, setExternalChangeDetected] = useState(false);
   const [externalChangeContent, setExternalChangeContent] = useState<string>('');
   const fileWatcherRef = useRef<EventSource | null>(null);
+  const latestContentRef = useRef(content);
+  const historyDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const autocompleteDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Estados para el buscador
   const [showFindBar, setShowFindBar] = useState(false);
@@ -270,9 +276,25 @@ const EditorContent: React.FC<EditorContentProps> = ({
   // ---
 
   // --- Funciones auxiliares ---
+  useEffect(() => {
+    latestContentRef.current = content;
+  }, [content]);
+
+  useEffect(() => {
+    return () => {
+      if (historyDebounceRef.current) {
+        clearTimeout(historyDebounceRef.current);
+      }
+      if (autocompleteDebounceRef.current) {
+        clearTimeout(autocompleteDebounceRef.current);
+      }
+    };
+  }, []);
+
   const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
     const scrollTop = e.currentTarget.scrollTop;
     const scrollLeft = e.currentTarget.scrollLeft;
+    setScrollTop(scrollTop);
     // Sincronizar scroll con overlays
     if (overlayRef.current) {
       overlayRef.current.scrollTop = scrollTop;
@@ -334,8 +356,10 @@ const EditorContent: React.FC<EditorContentProps> = ({
 
   // Lenguaje y líneas
   const language = useMemo(() => getLanguageFromExtension(file?.name), [file?.name]);
-  const lineCount = useMemo(() => getLineCount(content), [content]);
-  const lines = useMemo(() => content.split('\n'), [content]);
+  const deferredContent = useDeferredValue(content);
+  const lineCount = useMemo(() => getLineCount(deferredContent), [deferredContent]);
+  const lines = useMemo(() => deferredContent.split('\n'), [deferredContent]);
+  const supportsInlineCompletions = useMemo(() => /\.(ts|tsx|js|jsx)$/i.test(file?.name || ''), [file?.name]);
 
   // Highlighted content - línea por línea para mejor sincronización
   const highlightedLines = useHighlightLines(lines, language, settings);
@@ -535,17 +559,25 @@ const EditorContent: React.FC<EditorContentProps> = ({
     } else {
       setSaveStatus("saved")
     }
-    // Add to history with a small delay to avoid too many entries
-    setTimeout(() => addToHistory(newContent), 500)
+    // Add to history with debounce to avoid timer storms while typing
+    if (historyDebounceRef.current) {
+      clearTimeout(historyDebounceRef.current)
+    }
+    historyDebounceRef.current = setTimeout(() => {
+      addToHistory(newContent)
+    }, 500)
 
-    // Manejar autocompletado para todos los lenguajes
-    if (file?.name && !skipAutoClose) {
+    // Manejar autocompletado solo para JS/TS
+    if (file?.name && !skipAutoClose && supportsInlineCompletions) {
       setIsTyping(true);
       // Ocultar autocompletado mientras se escribe
       setShowAutocomplete(false);
 
       // Mostrar sugerencias después de un breve delay
-      setTimeout(() => {
+      if (autocompleteDebounceRef.current) {
+        clearTimeout(autocompleteDebounceRef.current)
+      }
+      autocompleteDebounceRef.current = setTimeout(() => {
         if (textareaRef.current) {
           const cursorPos = textareaRef.current.selectionStart;
           showTypeScriptSuggestions(cursorPos);
@@ -563,10 +595,10 @@ const EditorContent: React.FC<EditorContentProps> = ({
     }
 
     // Detectar y procesar marcadores $$ para generación de código con IA
-    if (!skipAutoClose) {
+    if (!skipAutoClose && newContent.includes('$$')) {
       detectAndProcessAICodeMarkers(newContent);
     }
-  }, [onContentChange, addToHistory, lastSavedContent, file?.name])
+  }, [onContentChange, addToHistory, lastSavedContent, file?.name, supportsInlineCompletions, detectAndProcessAICodeMarkers])
 
   // Funciones para autocompletado TypeScript
   const getCursorPosition = useCallback(() => {
@@ -1023,7 +1055,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
           case 'changed':
             console.log('[File Watch] File changed externally:', absolutePath);
             // Solo notificar si el contenido es diferente al actual
-            if (message.content !== content) {
+            if (message.content !== latestContentRef.current) {
               setExternalChangeContent(message.content);
               setExternalChangeDetected(true);
             }
@@ -1054,7 +1086,7 @@ const EditorContent: React.FC<EditorContentProps> = ({
         fileWatcherRef.current = null;
       }
     };
-  }, [file?.path, workspacePath, content]);
+  }, [file?.path, workspacePath]);
 
   // Update content when switching files (not when content changes within same file)
   useEffect(() => {
@@ -1898,9 +1930,9 @@ const EditorContent: React.FC<EditorContentProps> = ({
               onMouseOver={handleMouseOver}
               onMouseOut={handleMouseOut}
               onKeyDown={(e) => {
+                const textarea = e.currentTarget;
                 // Auto-indentación al presionar Enter
                 if (e.key === 'Enter') {
-                  const textarea = e.currentTarget;
                   const start = textarea.selectionStart;
                   const end = textarea.selectionEnd;
 
@@ -2224,4 +2256,4 @@ function getCodeContext(content: string, position: number, contextLines: number 
   return lines.slice(startLine, endLine + 1).join('\n');
 }
 
-export default EditorContent;
+export default EditorContent

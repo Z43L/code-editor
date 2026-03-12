@@ -6,9 +6,9 @@
 # next.js
 /.next/
 /out/
-
+/dist
 # production
-/build
+# build
 
 # debug
 npm-debug.log*

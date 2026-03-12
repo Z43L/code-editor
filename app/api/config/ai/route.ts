@@ -33,6 +33,24 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+    } else if (provider.type === 'ollama') {
+      // Validar configuración de Ollama
+      if (!provider.model) {
+        return NextResponse.json(
+          { error: 'Modelo requerido para Ollama' },
+          { status: 400 }
+        );
+      }
+      
+      // Establecer URL por defecto si no se proporciona
+      if (!provider.baseUrl) {
+        provider.baseUrl = 'http://localhost:11434';
+      }
+    } else if (provider.type === 'local') {
+      // Establecer URL por defecto si no se proporciona
+      if (!provider.baseUrl) {
+        provider.baseUrl = 'http://localhost:8080';
+      }
     }
 
     // Configurar el provider global
