@@ -2,7 +2,7 @@
 
 # Script para descargar e instalar Electron manualmente
 # Versión de Electron desde package.json
-ELECTRON_VERSION="38.2.2"
+ELECTRON_VERSION=$(node -p "require('./node_modules/electron/package.json').version")
 PLATFORM="linux"
 ARCH="x64"
 

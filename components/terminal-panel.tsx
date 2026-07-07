@@ -129,6 +129,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             <XtermTerminal
               key={activeTerminal.id}
               workingDirectory={activeTerminal.cwd}
+              terminalId={activeTerminal.id}
+              isActive={activeTerminal.isActive}
             />
           </div>
         ) : (

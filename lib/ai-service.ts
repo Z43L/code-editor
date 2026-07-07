@@ -33,7 +33,7 @@ export interface EditorChatRequest {
 }
 
 export interface AIProvider {
-  type: 'local' | 'openrouter' | 'ollama';
+  type: 'local' | 'openrouter' | 'ollama' | 'ollama-cloud';
   apiKey?: string;
   model?: string;
   baseUrl?: string;

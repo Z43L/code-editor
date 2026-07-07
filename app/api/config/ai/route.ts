@@ -41,10 +41,22 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-      
+
       // Establecer URL por defecto si no se proporciona
       if (!provider.baseUrl) {
         provider.baseUrl = 'http://localhost:11434';
+      }
+    } else if (provider.type === 'ollama-cloud') {
+      // Validar configuración de Ollama Cloud
+      if (!provider.apiKey || !provider.apiKey.trim()) {
+        return NextResponse.json(
+          { error: 'API key requerida para Ollama Cloud. Obtén una en https://ollama.com/settings/keys' },
+          { status: 400 }
+        );
+      }
+      // Modelo por defecto
+      if (!provider.model) {
+        provider.model = 'gpt-oss:120b-cloud';
       }
     } else if (provider.type === 'local') {
       // Establecer URL por defecto si no se proporciona

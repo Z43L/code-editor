@@ -16,9 +16,121 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory, 
   const hasInitialized = useRef<boolean>(false)
   const fitAddonRef = useRef<any>(null)
   const initialWorkingDirectory = useRef<string>(workingDirectory)
+  const retryAttemptRef = useRef<number>(0)
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isCleanedUpRef = useRef<boolean>(false)
+  const retryMessageShownRef = useRef<boolean>(false)
+
+  const safeTerminalId = (terminalId && terminalId !== 'undefined' && terminalId !== 'null') ? terminalId : 'default'
+
+  // Use refs to avoid circular dependencies between connectSSE <-> scheduleReconnect
+  // and to satisfy the exhaustive-deps lint rule.
+  const connectSSERef = useRef<(terminal: any) => void>(() => {})
+  const scheduleReconnectRef = useRef<(terminal: any) => void>(() => {})
+
+  // SSE connect/reconnect with exponential backoff
+  connectSSERef.current = (terminal: any) => {
+    if (isCleanedUpRef.current) return
+
+    const sseUrl = `/api/terminal/pty?terminalId=${encodeURIComponent(safeTerminalId)}&cwd=${encodeURIComponent(initialWorkingDirectory.current)}`
+    console.log(`[XtermTerminal ${safeTerminalId}] Opening SSE: ${sseUrl}`)
+
+    const eventSource = new EventSource(sseUrl)
+    eventSourceRef.current = eventSource
+
+    eventSource.onopen = () => {
+      console.log(`[XtermTerminal ${safeTerminalId}] PTY connection established`)
+      // Reset backoff on successful connection
+      if (retryAttemptRef.current > 0) {
+        terminal.write('\r\n\x1b[32m✔ Conexión restablecida\x1b[0m\r\n')
+        terminal.scrollToBottom()
+      }
+      retryAttemptRef.current = 0
+      retryMessageShownRef.current = false
+    }
+
+    eventSource.onmessage = (event) => {
+      // Ignore empty or comment-only messages (keep-alive)
+      if (!event.data || event.data.trim() === '' || event.data.startsWith(':')) {
+        return
+      }
+
+      try {
+        const message = JSON.parse(event.data)
+
+        switch (message.type) {
+          case 'connected':
+            console.log('Terminal connected:', message)
+            break
+
+          case 'output':
+            // Write all output directly to terminal
+            if (message.data) {
+              console.log('Writing to terminal:', message.data.slice(0, 50))
+              terminal.write(message.data)
+
+              // Force refresh to ensure rendering
+              requestAnimationFrame(() => {
+                terminal.scrollToBottom()
+                terminal.refresh(0, terminal.rows - 1)
+              })
+            }
+            break
+
+          case 'exit':
+            console.log('Terminal exited:', message)
+            terminal.write('\r\n\x1b[31mTerminal session ended\x1b[0m\r\n')
+            terminal.scrollToBottom()
+            break
+        }
+      } catch (error) {
+        // Silently ignore parse errors for keep-alive messages
+        if (event.data && event.data !== ':') {
+          console.error('Failed to parse SSE message:', error, event.data)
+        }
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error(`[XtermTerminal ${safeTerminalId}] SSE error:`, error)
+      // EventSource will try to reconnect on its own, but if it gives up
+      // we want to ensure we keep trying with backoff.
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+      scheduleReconnectRef.current(terminal)
+    }
+  }
+
+  scheduleReconnectRef.current = (terminal: any) => {
+    if (isCleanedUpRef.current) return
+
+    const attempt = retryAttemptRef.current
+    // Exponential backoff: 1s, 2s, 4s, 8s, ... cap 30s
+    const delay = Math.min(1000 * Math.pow(2, attempt), 30000)
+    retryAttemptRef.current = attempt + 1
+
+    // Show a single "reconnecting" message after the first failure (not on every retry)
+    if (!retryMessageShownRef.current) {
+      terminal.write('\r\n\x1b[33m⚠ Conexión perdida. Reintentando...\x1b[0m\r\n')
+      terminal.scrollToBottom()
+      retryMessageShownRef.current = true
+    }
+
+    console.log(`[XtermTerminal ${safeTerminalId}] Reconnecting in ${delay}ms (attempt ${retryAttemptRef.current})`)
+
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current)
+    }
+    reconnectTimeoutRef.current = setTimeout(() => {
+      if (isCleanedUpRef.current) return
+      connectSSERef.current(terminal)
+    }, delay)
+  }
 
   useEffect(() => {
-    console.log(`[XtermTerminal ${terminalId}] Component mounted or terminalId changed`)
+    console.log(`[XtermTerminal ${safeTerminalId}] Component mounted or terminalId changed`)
     let terminal: any
     let fitAddon: any
     let isCleanedUp = false
@@ -28,12 +140,12 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory, 
 
       // Prevent double initialization
       if (hasInitialized.current) {
-        console.log(`[XtermTerminal ${terminalId}] Terminal already initialized, skipping...`)
+        console.log(`[XtermTerminal ${safeTerminalId}] Terminal already initialized, skipping...`)
         return
       }
       hasInitialized.current = true
 
-      console.log(`[XtermTerminal ${terminalId}] Initializing terminal...`)
+      console.log(`[XtermTerminal ${safeTerminalId}] Initializing terminal...`)
 
       // Dynamic import for xterm.js components
       const { Terminal } = await import('@xterm/xterm')
@@ -170,63 +282,8 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory, 
       }, 200)
 
       // Connect to PTY via Server-Sent Events
-      const eventSource = new EventSource(
-        `/api/terminal/pty?terminalId=${terminalId}&cwd=${encodeURIComponent(initialWorkingDirectory.current)}`
-      )
-      eventSourceRef.current = eventSource
-
       fitAddonRef.current = fitAddon
-
-      eventSource.onopen = () => {
-        console.log('PTY connection established')
-      }
-
-      eventSource.onmessage = (event) => {
-        // Ignore empty or comment-only messages (keep-alive)
-        if (!event.data || event.data.trim() === '' || event.data.startsWith(':')) {
-          return
-        }
-
-        try {
-          const message = JSON.parse(event.data)
-
-          switch (message.type) {
-            case 'connected':
-              console.log('Terminal connected:', message)
-              break
-
-            case 'output':
-              // Write all output directly to terminal
-              if (message.data) {
-                console.log('Writing to terminal:', message.data.slice(0, 50))
-                terminal.write(message.data)
-
-                // Force refresh to ensure rendering
-                requestAnimationFrame(() => {
-                  terminal.scrollToBottom()
-                  terminal.refresh(0, terminal.rows - 1)
-                })
-              }
-              break
-
-            case 'exit':
-              console.log('Terminal exited:', message)
-              terminal.write('\r\n\x1b[31mTerminal session ended\x1b[0m\r\n')
-              terminal.scrollToBottom()
-              break
-          }
-        } catch (error) {
-          // Silently ignore parse errors for keep-alive messages
-          if (event.data && event.data !== ':') {
-            console.error('Failed to parse SSE message:', error, event.data)
-          }
-        }
-      }
-
-      eventSource.onerror = (error) => {
-        console.error('SSE error:', error)
-        terminal.write('\r\n\x1b[31mConnection error. Retrying...\x1b[0m\r\n')
-      }
+      connectSSERef.current(terminal)
 
       // Handle terminal input - send to PTY
       terminal.onData(async (data: string) => {
@@ -235,7 +292,7 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory, 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              terminalId: terminalId,
+              terminalId: safeTerminalId,
               data: data
             })
           })
@@ -271,7 +328,7 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory, 
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                terminalId: terminalId,
+                terminalId: safeTerminalId,
                 resize: {
                   cols: terminal.cols,
                   rows: terminal.rows
@@ -296,6 +353,10 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory, 
           eventSourceRef.current.close()
           eventSourceRef.current = null
         }
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current)
+          reconnectTimeoutRef.current = null
+        }
         if (terminal) {
           terminal.dispose()
         }
@@ -308,23 +369,30 @@ export const XtermTerminal: React.FC<XtermTerminalProps> = ({ workingDirectory, 
     initTerminal()
 
     return () => {
-      console.log(`[XtermTerminal ${terminalId}] ⚠️ CLEANUP TRIGGERED - Component unmounting!`)
-      console.trace(`[XtermTerminal ${terminalId}] Cleanup stack trace`)
+      console.log(`[XtermTerminal ${safeTerminalId}] ⚠️ CLEANUP TRIGGERED - Component unmounting!`)
+      console.trace(`[XtermTerminal ${safeTerminalId}] Cleanup stack trace`)
       isCleanedUp = true
+      isCleanedUpRef.current = true
       hasInitialized.current = false
+      retryAttemptRef.current = 0
+      retryMessageShownRef.current = false
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+      }
       if (eventSourceRef.current) {
-        console.log(`[XtermTerminal ${terminalId}] Closing EventSource`)
+        console.log(`[XtermTerminal ${safeTerminalId}] Closing EventSource`)
         eventSourceRef.current.close()
         eventSourceRef.current = null
       }
       if (terminalInstanceRef.current) {
-        console.log(`[XtermTerminal ${terminalId}] Disposing terminal instance`)
+        console.log(`[XtermTerminal ${safeTerminalId}] Disposing terminal instance`)
         terminalInstanceRef.current.dispose()
         terminalInstanceRef.current = null
       }
       fitAddonRef.current = null
     }
-  }, [terminalId])
+  }, [safeTerminalId])
 
   // Handle visibility changes when switching between terminals
   useEffect(() => {

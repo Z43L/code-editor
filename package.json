@@ -125,6 +125,7 @@
       "node_modules/next/**/*",
       "node_modules/typescript/**/*",
       "node_modules/styled-jsx/**/*",
+      "node_modules/@swc/**/*",
       "node_modules/vscode-langservers-extracted/**/*",
       "node_modules/pyright/**/*",
       "node_modules/gopls/**/*"

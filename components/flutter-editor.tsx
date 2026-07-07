@@ -111,8 +111,20 @@ export function FlutterEditor() {
 
   // Función para actualizar configuración de IA
   const updateAIConfig = useCallback(async (newProvider: AIProvider) => {
+    // Actualizar estado local INMEDIATAMENTE para que la UI responda
+    setAiProvider(newProvider);
+
+    // Guardar en localStorage para persistencia
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('aiProvider', JSON.stringify(newProvider));
+      } catch (e) {
+        console.warn('No se pudo guardar aiProvider en localStorage:', e);
+      }
+    }
+
+    // Intentar enviar al backend en background (no bloqueante)
     try {
-      // Enviar configuración al backend
       const response = await fetch('/api/config/ai', {
         method: 'POST',
         headers: {
@@ -122,18 +134,15 @@ export function FlutterEditor() {
       });
 
       if (!response.ok) {
-        throw new Error('Error actualizando configuración en el backend');
+        const errorData = await response.json().catch(() => ({}));
+        console.warn('⚠️ Backend rechazó la configuración (no crítico para UI):', errorData.error || response.status);
+        return;
       }
 
-      // Actualizar estado local
-      setAiProvider(newProvider);
-
-      // Guardar en localStorage para persistencia
-      localStorage.setItem('aiProvider', JSON.stringify(newProvider));
-
-      console.log('✅ Configuración de IA actualizada:', newProvider);
+      console.log('✅ Configuración de IA enviada al backend:', newProvider);
     } catch (error) {
-      console.error('❌ Error actualizando configuración de IA:', error);
+      // No mostrar error al usuario - la UI ya está actualizada
+      console.warn('⚠️ No se pudo sincronizar con el backend (la UI ya está actualizada):', error);
     }
   }, [])
 

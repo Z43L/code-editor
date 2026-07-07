@@ -3,9 +3,8 @@ import type { AIProvider, EditorChatRequest, EditorChatResponse } from '../../..
 
 // Almacenamiento temporal del provider (idealmente usar una base de datos o variable de sesión)
 let currentProvider: AIProvider = {
-  type: 'ollama',
-  baseUrl: 'http://localhost:11434',
-  model: 'llama3.2'
+  type: 'local',
+  baseUrl: 'http://localhost:8080'
 };
 
 // Helper function to build prompt (same as in ai-service.ts)
@@ -150,6 +149,98 @@ async function sendOllamaRequest(request: EditorChatRequest, provider: AIProvide
   }
 }
 
+async function sendOllamaCloudRequest(request: EditorChatRequest, provider: AIProvider): Promise<EditorChatResponse> {
+  if (!provider.apiKey || !provider.apiKey.trim()) {
+    throw new Error('API key requerida para Ollama Cloud. Obtén una en https://ollama.com/settings/keys');
+  }
+
+  const baseUrl = 'https://ollama.com';
+  const model = provider.model || 'gpt-oss:120b-cloud';
+  const prompt = buildPrompt(request);
+
+  try {
+    console.log('☁️  Enviando solicitud a Ollama Cloud:', { model });
+
+    const response = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${provider.apiKey.trim()}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        stream: false
+      })
+    });
+
+    console.log('📡 Respuesta de Ollama Cloud:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Error de Ollama Cloud:', errorText);
+
+      let errorMessage = `Ollama Cloud API error (${response.status})`;
+
+      if (response.status === 401) {
+        errorMessage = 'API key de Ollama Cloud inválida. Verifica tu clave en https://ollama.com/settings/keys';
+      } else if (response.status === 403) {
+        errorMessage = 'Acceso denegado a Ollama Cloud. Tu plan puede no incluir este modelo.';
+      } else if (response.status === 404) {
+        errorMessage = `Modelo "${model}" no disponible en Ollama Cloud. Prueba con otro modelo (ej: gpt-oss:120b-cloud).`;
+      } else if (response.status === 429) {
+        errorMessage = 'Rate limit alcanzado en Ollama Cloud. Espera unos minutos o mejora tu plan.';
+      } else if (response.status >= 500) {
+        errorMessage = 'Error del servidor de Ollama Cloud. Inténtalo de nuevo más tarde.';
+      } else {
+        try {
+          const errorData = JSON.parse(errorText);
+          if (errorData.error) {
+            errorMessage += ` - ${errorData.error}`;
+          }
+        } catch {
+          errorMessage += ` - ${errorText}`;
+        }
+      }
+
+      throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+    console.log('✅ Respuesta exitosa de Ollama Cloud');
+
+    if (data.error) {
+      throw new Error(`Ollama Cloud API error: ${data.error}`);
+    }
+
+    const message = data.message?.content || 'Sin respuesta';
+
+    return {
+      message,
+      is_code_response: isCodeResponse(message),
+      should_create_file: !request.has_selection && !request.active_file,
+      file_name: 'chat.md'
+    };
+  } catch (error) {
+    console.error('💥 Fallo en solicitud a Ollama Cloud:', error);
+
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new Error('No se puede conectar a Ollama Cloud. Verifica tu conexión a internet.');
+    }
+
+    if (error instanceof Error && (error.message.includes('Ollama Cloud') || error.message.includes('API key'))) {
+      throw error;
+    }
+
+    throw new Error(`Error inesperado con Ollama Cloud: ${error instanceof Error ? error.message : 'Desconocido'}`);
+  }
+}
+
 async function sendOpenRouterRequest(request: EditorChatRequest, provider: AIProvider): Promise<EditorChatResponse> {
   if (!provider.apiKey) {
     throw new Error('API key requerida para OpenRouter');
@@ -242,6 +333,8 @@ export async function POST(request: NextRequest) {
 
     if (activeProvider.type === 'ollama') {
       response = await sendOllamaRequest(chatRequest, activeProvider);
+    } else if (activeProvider.type === 'ollama-cloud') {
+      response = await sendOllamaCloudRequest(chatRequest, activeProvider);
     } else if (activeProvider.type === 'openrouter') {
       response = await sendOpenRouterRequest(chatRequest, activeProvider);
     } else if (activeProvider.type === 'local') {
@@ -278,7 +371,7 @@ export async function GET(request: NextRequest) {
     // Si se proporcionan parámetros, usar esos
     if (provider) {
       testProvider = {
-        type: provider as 'local' | 'openrouter' | 'ollama',
+        type: provider as 'local' | 'openrouter' | 'ollama' | 'ollama-cloud',
         baseUrl: baseUrl || undefined,
         apiKey: apiKey || undefined
       };
@@ -301,6 +394,24 @@ export async function GET(request: NextRequest) {
         console.log('🦙 Ollama health check:', isHealthy ? '✅' : '❌');
       } catch (error) {
         console.error('❌ Ollama health check failed:', error);
+        isHealthy = false;
+      }
+    } else if (testProvider.type === 'ollama-cloud') {
+      if (!testProvider.apiKey) {
+        return NextResponse.json({ healthy: false, error: 'No API key provided' });
+      }
+      try {
+        const response = await fetch('https://ollama.com/api/tags', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${testProvider.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        isHealthy = response.ok;
+        console.log('☁️  Ollama Cloud health check:', isHealthy ? '✅' : '❌');
+      } catch (error) {
+        console.error('❌ Ollama Cloud health check failed:', error);
         isHealthy = false;
       }
     } else if (testProvider.type === 'openrouter') {

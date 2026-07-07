@@ -422,8 +422,8 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
   // Use default AI provider if not provided
   const currentAiProvider = aiProvider || {
     type: 'ollama' as const,
-    baseUrl: 'http://localhost:11434',
-    model: 'llama3.2'
+    baseUrl: '',
+    model: ''
   }
 
   const handleAiProviderChange = (newProvider: AIProvider) => {
@@ -2346,7 +2346,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                   <label className="text-xs text-gray-300">Archivo de chat:</label>
                   <input
                     type="text"
-                    value={currentSettings.chatFileName}
+                    value={currentSettings.chatFileName ?? ''}
                     onChange={(e) => {
                       if (onSettingsChange) {
                         onSettingsChange({
@@ -2364,7 +2364,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                   <label className="text-xs text-gray-300">Directorio para guardar chats (ruta relativa):</label>
                   <input
                     type="text"
-                    value={currentSettings.chatDirectory}
+                    value={currentSettings.chatDirectory ?? ''}
                     onChange={(e) => handleChatDirectoryChange(e.target.value)}
                     className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
                     placeholder="chats"
@@ -2379,7 +2379,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     <label className="text-xs text-gray-300">Nombre de usuario:</label>
                     <input
                       type="text"
-                      value={currentSettings.headerUsername}
+                      value={currentSettings.headerUsername ?? ''}
                       onChange={(e) => {
                         if (onSettingsChange) {
                           onSettingsChange({
@@ -2397,7 +2397,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     <label className="text-xs text-gray-300">Email:</label>
                     <input
                       type="email"
-                      value={currentSettings.headerEmail}
+                      value={currentSettings.headerEmail ?? ''}
                       onChange={(e) => {
                         if (onSettingsChange) {
                           onSettingsChange({
@@ -2415,7 +2415,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     <label className="text-xs text-gray-300">Dominio:</label>
                     <input
                       type="text"
-                      value={currentSettings.headerDomain}
+                      value={currentSettings.headerDomain ?? ''}
                       onChange={(e) => {
                         if (onSettingsChange) {
                           onSettingsChange({
@@ -2432,7 +2432,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                   <div className="space-y-1 mt-2">
                     <label className="text-xs text-gray-300">Logo ASCII personalizado (7 líneas, max 78 caracteres por línea):</label>
                     <textarea
-                      value={currentSettings.headerAsciiLogo}
+                      value={currentSettings.headerAsciiLogo ?? ''}
                       onChange={(e) => {
                         if (onSettingsChange) {
                           onSettingsChange({
@@ -2464,19 +2464,21 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     <select
                       value={currentAiProvider.type}
                       onChange={(e) => {
-                        const newType = e.target.value as 'local' | 'openrouter' | 'ollama';
-                        const defaultConfig = {
-                          local: { type: 'local' as const, baseUrl: 'http://localhost:8080' },
-                          openrouter: { type: 'openrouter' as const, apiKey: '', model: 'anthropic/claude-3.5-sonnet' },
-                          ollama: { type: 'ollama' as const, baseUrl: 'http://localhost:11434', model: 'llama3.2' }
+                        const newType = e.target.value as 'local' | 'openrouter' | 'ollama' | 'ollama-cloud';
+                        const defaultConfig: Record<string, AIProvider> = {
+                          local: { type: 'local', baseUrl: '', model: '' },
+                          openrouter: { type: 'openrouter', apiKey: '', model: '' },
+                          ollama: { type: 'ollama', baseUrl: '', model: '' },
+                          'ollama-cloud': { type: 'ollama-cloud', apiKey: '', model: '' }
                         };
-                        handleAiProviderChange(defaultConfig[newType]);
+                        handleAiProviderChange(defaultConfig[newType] || { type: newType });
                       }}
                       className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
                     >
                       <option value="local">Local</option>
                       <option value="openrouter">OpenRouter</option>
-                      <option value="ollama">Ollama</option>
+                      <option value="ollama">Ollama (local)</option>
+                      <option value="ollama-cloud">Ollama Cloud (ollama.com)</option>
                     </select>
                   </div>
 
@@ -2487,7 +2489,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                         <label className="text-xs text-gray-300">API Key:</label>
                         <input
                           type="password"
-                          value={currentAiProvider.apiKey || ''}
+                          value={currentAiProvider.apiKey ?? ''}
                           onChange={(e) => {
                             handleAiProviderChange({
                               ...currentAiProvider,
@@ -2502,7 +2504,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                         <label className="text-xs text-gray-300">Modelo:</label>
                         <input
                           type="text"
-                          value={currentAiProvider.model || ''}
+                          value={currentAiProvider.model ?? ''}
                           onChange={(e) => {
                             handleAiProviderChange({
                               ...currentAiProvider,
@@ -2523,7 +2525,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                         <label className="text-xs text-gray-300">URL de Ollama:</label>
                         <input
                           type="text"
-                          value={currentAiProvider.baseUrl || 'http://localhost:11434'}
+                          value={currentAiProvider.baseUrl ?? ''}
                           onChange={(e) => {
                             handleAiProviderChange({
                               ...currentAiProvider,
@@ -2538,7 +2540,7 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                         <label className="text-xs text-gray-300">Modelo:</label>
                         <input
                           type="text"
-                          value={currentAiProvider.model || ''}
+                          value={currentAiProvider.model ?? ''}
                           onChange={(e) => {
                             handleAiProviderChange({
                               ...currentAiProvider,
@@ -2555,13 +2557,55 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                     </>
                   )}
 
+                  {/* Ollama Cloud specific fields */}
+                  {currentAiProvider.type === 'ollama-cloud' && (
+                    <>
+                      <div className="space-y-1 mt-2">
+                        <label className="text-xs text-gray-300">API Key (ollama.com):</label>
+                        <input
+                          type="password"
+                          value={currentAiProvider.apiKey ?? ''}
+                          onChange={(e) => {
+                            handleAiProviderChange({
+                              ...currentAiProvider,
+                              apiKey: e.target.value
+                            })
+                          }}
+                          className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                          placeholder="ollama_..."
+                        />
+                        <div className="text-xs text-gray-500 mt-1">
+                          Obtén tu API key en <span className="text-blue-400">https://ollama.com/settings/keys</span>
+                        </div>
+                      </div>
+                      <div className="space-y-1 mt-2">
+                        <label className="text-xs text-gray-300">Modelo:</label>
+                        <input
+                          type="text"
+                          value={currentAiProvider.model ?? ''}
+                          onChange={(e) => {
+                            handleAiProviderChange({
+                              ...currentAiProvider,
+                              model: e.target.value
+                            })
+                          }}
+                          className="w-full px-2 py-1 bg-[#3c3c3c] border border-[#5e5e5e] rounded text-xs text-white focus:outline-none focus:border-blue-500"
+                          placeholder="gpt-oss:120b-cloud"
+                        />
+                        <div className="text-xs text-gray-500 mt-1">
+                          Ejemplos: gpt-oss:120b-cloud, minimax-m3, qwen3-coder:480b-cloud, etc.
+                        </div>
+                      </div>
+                    </>
+                  )}
+
                   {/* Local server specific fields */}
                   {currentAiProvider.type === 'local' && (
                     <div className="space-y-1 mt-2">
                       <label className="text-xs text-gray-300">URL del servidor:</label>
                       <input
                         type="text"
-                        value={currentAiProvider.baseUrl || 'http://localhost:8080'}
+                        value={currentAiProvider.baseUrl ?? ''}
                         onChange={(e) => {
                           handleAiProviderChange({
                             ...currentAiProvider,
@@ -2582,20 +2626,25 @@ export function FileTree({ activeFile, onFileSelect, files, onCreateFile, onLoad
                           alert('Por favor, ingresa tu API key de OpenRouter primero.');
                           return;
                         }
-                        
+                        if (currentAiProvider.type === 'ollama-cloud' && !currentAiProvider.apiKey) {
+                          alert('Por favor, ingresa tu API key de Ollama Cloud primero.');
+                          return;
+                        }
+
                         try {
                           const testProvider = { ...currentAiProvider };
                           const { aiService } = await import('../lib/ai-service');
                           aiService.setProvider(testProvider);
-                          
+
                           const isHealthy = await aiService.healthCheck();
                           if (isHealthy) {
-                            const providerNames = {
+                            const providerNames: Record<string, string> = {
                               local: 'servidor local',
                               openrouter: 'OpenRouter',
-                              ollama: 'Ollama'
+                              ollama: 'Ollama',
+                              'ollama-cloud': 'Ollama Cloud'
                             };
-                            alert(`✅ Conexión exitosa con ${providerNames[currentAiProvider.type]}!`);
+                            alert(`✅ Conexión exitosa con ${providerNames[currentAiProvider.type] || currentAiProvider.type}!`);
                           } else {
                             alert('❌ Error de conexión. Verifica tu configuración y conexión.');
                           }
